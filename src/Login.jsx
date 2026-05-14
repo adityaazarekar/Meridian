@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 
+/** In-memory user store (no browser persistence). */
+const memoryUsers = [];
+
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
@@ -25,25 +28,21 @@ export default function Login({ onLogin }) {
       return;
     }
 
-    const users = JSON.parse(localStorage.getItem('meridian_users') || '[]');
-
     if (isRegister) {
       if (!name.trim()) {
         setError('Name is required for registration.');
         return;
       }
-      if (users.find(u => u.email === email)) {
+      if (memoryUsers.find(u => u.email === email)) {
         setError('User already exists. Please login.');
         return;
       }
       const newUser = { name, email, password };
-      localStorage.setItem('meridian_users', JSON.stringify([...users, newUser]));
-      localStorage.setItem('meridian_active_user', JSON.stringify(newUser));
+      memoryUsers.push(newUser);
       onLogin(newUser);
     } else {
-      const user = users.find(u => u.email === email && u.password === password);
+      const user = memoryUsers.find(u => u.email === email && u.password === password);
       if (user) {
-        localStorage.setItem('meridian_active_user', JSON.stringify(user));
         onLogin(user);
       } else {
         setError('Invalid email or password.');
@@ -58,7 +57,7 @@ export default function Login({ onLogin }) {
           <h1 style={{ color: P.gold, margin: '0 0 8px 0', fontSize: 24, letterSpacing: '2px', textTransform: 'uppercase' }}>MERIDIAN</h1>
           <p style={{ color: P.slate, margin: 0, fontSize: 14 }}>Global Analytics Platform</p>
         </div>
-        
+
         {error && <div style={{ backgroundColor: 'rgba(251, 113, 133, 0.1)', color: P.rose, padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20, border: `1px solid ${P.rose}40` }}>{error}</div>}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -68,7 +67,7 @@ export default function Login({ onLogin }) {
               <input type="text" value={name} onChange={e => setName(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 8, color: P.white, outline: 'none' }} placeholder="John Doe" />
             </div>
           )}
-          
+
           <div>
             <label style={{ display: 'block', color: P.slate, fontSize: 12, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '1px' }}>Email Address</label>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', backgroundColor: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 8, color: P.white, outline: 'none' }} placeholder="system@meridian.com" />

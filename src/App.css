@@ -696,3 +696,82 @@
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(232, 184, 75, .5);
 }
+
+/* ─── MERIDIAN LIVE / MOBILE LAYOUT ───────────────────── */
+.page-shell {
+    width: 100%;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 1rem;
+    box-sizing: border-box;
+}
+
+.metric-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+}
+
+@media (max-width: 480px) {
+    .metric-card-grid {
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    }
+}
+
+.mobile-country-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+@media (max-width: 768px) {
+    .mobile-country-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 6px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .nav-tab {
+        min-height: 44px;
+    }
+
+    .sel,
+    .inp {
+        min-height: 44px;
+    }
+}
+
+@media (max-width: 640px) {
+
+    .sel,
+    .inp {
+        width: 100%;
+        min-width: 0 !important;
+    }
+
+    .search-box {
+        width: 100% !important;
+    }
+
+    .search-box:focus {
+        width: 100% !important;
+    }
+}
+
+.kv {
+    font-size: clamp(14px, 4vw, 22px);
+}
+
+.chart-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+
+@media (max-width: 768px) {
+    .chart-split {
+        grid-template-columns: 1fr;
+    }
+}

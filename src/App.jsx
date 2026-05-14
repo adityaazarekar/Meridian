@@ -1,6 +1,14 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import Papa from "papaparse";
+import { useState, useEffect, useMemo, useRef } from "react";
 import "./App.css";
+import {
+  getGlobalTickers,
+  getBatchQuotes,
+  getStockData,
+  normalizeChart,
+  stubsFromGlobalMap,
+  mergeApiMetricsToCompany,
+} from "./services/marketAPI";
+import { fmtNum } from "./utils/formatMetric";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ScatterChart, Scatter, ZAxis, LineChart, Line, AreaChart, Area,
@@ -203,13 +211,15 @@ function Spark({ data, color = P.gold, w = 110, h = 36 }) {
 }
 
 function Gauge({ value, max = 100, color = P.gold, size = 96, label = "" }) {
-  const r = size / 2 - 9, circ = 2 * Math.PI * r, arc = circ * 0.75, fill = arc * (Math.min(value, max) / max);
+  const r = size / 2 - 9, circ = 2 * Math.PI * r, arc = circ * 0.75;
+  const v = Number.isFinite(value) ? value : 0;
+  const fill = arc * (Math.min(v, max) / max);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       <svg width={size} height={size} style={{ transform: "rotate(135deg)" }}>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,.07)" strokeWidth={7} strokeDasharray={`${arc} ${circ - arc}`} />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={7} strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" style={{ filter: `drop-shadow(0 0 5px ${color}88)`, transition: "stroke-dasharray 1.2s cubic-bezier(.16,1,.3,1)" }} />
-        <text x={size / 2} y={size / 2 + 1} textAnchor="middle" dominantBaseline="middle" style={{ fontFamily: "'DM Mono',monospace", fontSize: 17, fill: P.white, transform: `rotate(-135deg)`, transformOrigin: `${size / 2}px ${size / 2}px` }}>{Math.round(value)}</text>
+        <text x={size / 2} y={size / 2 + 1} textAnchor="middle" dominantBaseline="middle" style={{ fontFamily: "'DM Mono',monospace", fontSize: 17, fill: P.white, transform: `rotate(-135deg)`, transformOrigin: `${size / 2}px ${size / 2}px` }}>{Number.isFinite(value) ? Math.round(value) : "—"}</text>
       </svg>
       <span style={{ fontSize: 11, color: P.slateD, letterSpacing: ".12em", textTransform: "uppercase", fontWeight: 600 }}>{label}</span>
     </div>
@@ -294,6 +304,8 @@ function CorrMatrix() {
 // ─── MAIN COMPONENT ─────────────────────────────────────────────────────────
 export default function App({ user, onLogout }) {
   const [data, setData] = useState([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState(null);
   const [tab, setTab] = useState("global");
   const [sector, setSector] = useState("All");
   const [country, setCountry] = useState("United States");
@@ -311,9 +323,7 @@ export default function App({ user, onLogout }) {
   const [peerSearch, setPeerSearch] = useState("");
 
   // Watchlist & Sort state
-  const [watchlist, setWatchlist] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('meridian_watchlist') || '[]'); } catch { return []; }
-  });
+  const [watchlist, setWatchlist] = useState([]);
   const [sortCol, setSortCol] = useState('capitalGravity');
   const [sortDir, setSortDir] = useState('desc');
 
@@ -323,62 +333,92 @@ export default function App({ user, onLogout }) {
 
   // Company modal
   const [modalCompany, setModalCompany] = useState(null);
+  const modalSymRef = useRef("");
+  const countryInitRef = useRef(false);
+  const marketLoadSessionRef = useRef(0);
+  const hadSuccessfulMarketFetchRef = useRef(false);
 
-  // Load CSV Data
+  const [chartH, setChartH] = useState(350);
   useEffect(() => {
-    Papa.parse("/companies.csv", {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const formattedData = results.data.map((row, i) => {
-          // Convert large numbers to Billions (1e9)
-          const cap = parseFloat(row['marketcap'] || 0) / 1e9;
-          const rev = parseFloat(row['revenue_ttm'] || 0) / 1e9;
-          const profit = parseFloat(row['earnings_ttm'] || 0) / 1e9;
-
-          return {
-            id: i,
-            name: row['Name'] || "Unknown",
-            sector: row['Sector'] || "Industrials",
-            country: row['country'] || "Unknown",
-            capitalGravity: cap,
-            revenueFlow: rev,
-            netYield: profit,
-            valuationIndex: rev ? cap / rev : 0,
-            sharePrice: parseFloat(row['price (GBP)'] || 0),
-            dividendRate: rnd(0.005, 0.06),
-            liquidityScore: rnd(20, 98),
-            growthMomentum: rnd(-10, 40),
-            riskCoefficient: rnd(10, 85),
-            efficiencyRatio: rev ? profit / rev : 0,
-            // Real trader/analyst metrics
-            peRatio: profit > 0 ? cap / profit : rnd(8, 120),
-            pbRatio: rnd(0.8, 15),
-            debtEquity: rnd(0.1, 3.5),
-            roe: rnd(-5, 45),
-            roa: rnd(-2, 25),
-            beta: rnd(0.3, 2.2),
-            sharpeRatio: rnd(-0.5, 3.5),
-            dividendYield: rnd(0, 6),
-            ebitdaMargin: rnd(5, 55),
-            fcfYield: rnd(-2, 12),
-            // ESG scores
-            esgEnv: rnd(20, 95),
-            esgSoc: rnd(25, 90),
-            esgGov: rnd(30, 95),
-            esgTotal: 0, // computed below
-          };
-        });
-
-        // Compute ESG total and filter
-        const withEsg = formattedData.map(d => ({ ...d, esgTotal: (d.esgEnv + d.esgSoc + d.esgGov) / 3 }));
-        const cleanData = withEsg.filter(d => d.name !== "Unknown" && d.capitalGravity > 0);
-        setData(cleanData);
-        if (cleanData.length > 0) setCountry(cleanData[0].country);
-      }
-    });
+    const upd = () => setChartH(typeof window !== "undefined" && window.innerWidth < 768 ? 220 : 350);
+    upd();
+    window.addEventListener("resize", upd);
+    return () => window.removeEventListener("resize", upd);
   }, []);
+
+  const [reloadTick, setReloadTick] = useState(0);
+
+  // Load market data (global ticker map + batched yfinance metrics)
+  useEffect(() => {
+    const session = ++marketLoadSessionRef.current;
+    let cancelled = false;
+
+    const loadAll = async () => {
+      if (!hadSuccessfulMarketFetchRef.current) {
+        setDataLoading(true);
+      }
+      setDataError(null);
+      try {
+        const map = await getGlobalTickers();
+        if (cancelled || marketLoadSessionRef.current !== session) return;
+
+        const stubs = stubsFromGlobalMap(map);
+        const bySymbol = Object.fromEntries(stubs.map((s) => [s.symbol, { ...s }]));
+        const symbols = stubs.map((s) => s.symbol);
+        const chunk = 20;
+        const parts = [];
+        for (let i = 0; i < symbols.length; i += chunk) {
+          parts.push(symbols.slice(i, i + chunk));
+        }
+        const batchResults = await Promise.all(parts.map((part) => getBatchQuotes(part)));
+        if (cancelled || marketLoadSessionRef.current !== session) return;
+
+        for (let p = 0; p < parts.length; p++) {
+          const part = parts[p];
+          const batch = batchResults[p];
+          for (const sym of part) {
+            const m = batch[sym];
+            if (bySymbol[sym]) {
+              bySymbol[sym] = mergeApiMetricsToCompany(bySymbol[sym], m);
+            }
+          }
+        }
+        const merged = stubs.map((s) => bySymbol[s.symbol] || s);
+        if (cancelled || marketLoadSessionRef.current !== session) return;
+
+        setData((prev) => {
+          if (!prev.length) return merged;
+          const histMap = Object.fromEntries(
+            prev.filter((x) => x.priceHistory?.length).map((x) => [x.id, x.priceHistory])
+          );
+          return merged.map((row) => ({
+            ...row,
+            priceHistory: histMap[row.id] || row.priceHistory,
+          }));
+        });
+        if (merged.length && !countryInitRef.current) {
+          setCountry(merged[0].country);
+          countryInitRef.current = true;
+        }
+        hadSuccessfulMarketFetchRef.current = true;
+      } catch (err) {
+        if (!cancelled && marketLoadSessionRef.current === session) {
+          setDataError(err.message || "Failed to load market data");
+        }
+      } finally {
+        if (!cancelled && marketLoadSessionRef.current === session) {
+          setDataLoading(false);
+        }
+      }
+    };
+
+    loadAll();
+    const poll = setInterval(loadAll, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
+  }, [reloadTick]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -413,6 +453,64 @@ export default function App({ user, onLogout }) {
     return countryCompanies.find(c => c.id === companyId) || null;
   }, [companyId, countryCompanies]);
 
+  useEffect(() => {
+    if (!selectedCompany?.symbol) return;
+    let cancelled = false;
+    const cid = selectedCompany.id;
+    const sym = selectedCompany.symbol;
+
+    const load = async () => {
+      try {
+        const res = await getStockData(sym);
+        if (cancelled) return;
+        const hist = normalizeChart(res.chart || []);
+        setData((prev) =>
+          prev.map((c) =>
+            c.id === cid
+              ? { ...mergeApiMetricsToCompany(c, res.metrics), priceHistory: hist }
+              : c
+          )
+        );
+      } catch {
+        /* keep last good row */
+      }
+    };
+
+    load();
+    const id = setInterval(load, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [selectedCompany?.id, selectedCompany?.symbol]);
+
+  useEffect(() => {
+    if (!modalCompany?.symbol) {
+      modalSymRef.current = "";
+      return;
+    }
+    if (modalSymRef.current === modalCompany.symbol && modalCompany.priceHistory?.length) return;
+    modalSymRef.current = modalCompany.symbol;
+    let cancelled = false;
+    const sym = modalCompany.symbol;
+    (async () => {
+      try {
+        const res = await getStockData(sym);
+        if (cancelled) return;
+        setModalCompany((prev) =>
+          prev && prev.symbol === sym
+            ? { ...mergeApiMetricsToCompany(prev, res.metrics), priceHistory: normalizeChart(res.chart || []) }
+            : prev
+        );
+      } catch {
+        /* keep modal row as opened */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [modalCompany]);
+
   const companyCandidates = useMemo(() => {
     const q = companyQuery.trim().toLowerCase();
     const base = [...countryCompanies].sort((a, b) => b.capitalGravity - a.capitalGravity);
@@ -421,7 +519,11 @@ export default function App({ user, onLogout }) {
   }, [countryCompanies, companyQuery]);
 
   const companyWfItems = useMemo(() => selectedCompany ? buildCompanyWaterfall(selectedCompany) : null, [selectedCompany]);
-  const companySeries = useMemo(() => selectedCompany ? buildCompanySeries(selectedCompany, 50) : null, [selectedCompany]);
+  const companySeries = useMemo(() => {
+    if (!selectedCompany) return null;
+    if (selectedCompany.priceHistory?.length) return selectedCompany.priceHistory;
+    return buildCompanySeries(selectedCompany, 50);
+  }, [selectedCompany]);
 
   // Aggregates
   const totalCap = filtered.reduce((a, c) => a + c.capitalGravity, 0);
@@ -460,11 +562,7 @@ export default function App({ user, onLogout }) {
 
   // Watchlist helpers
   const toggleWatch = (id) => {
-    setWatchlist(prev => {
-      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-      localStorage.setItem('meridian_watchlist', JSON.stringify(next));
-      return next;
-    });
+    setWatchlist(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
   };
   const watchedCompanies = useMemo(() => data.filter(c => watchlist.includes(c.id)), [data, watchlist]);
 
@@ -478,7 +576,13 @@ export default function App({ user, onLogout }) {
   // Sorted leaderboard
   const sortedFiltered = useMemo(() => {
     const arr = [...filtered];
-    arr.sort((a, b) => sortDir === 'desc' ? (b[sortCol] || 0) - (a[sortCol] || 0) : (a[sortCol] || 0) - (b[sortCol] || 0));
+    arr.sort((a, b) => {
+      const av = a[sortCol];
+      const bv = b[sortCol];
+      const aNum = av == null || Number.isNaN(av) ? 0 : av;
+      const bNum = bv == null || Number.isNaN(bv) ? 0 : bv;
+      return sortDir === 'desc' ? bNum - aNum : aNum - bNum;
+    });
     return arr;
   }, [filtered, sortCol, sortDir]);
   const handleSort = (col) => {
@@ -584,7 +688,7 @@ export default function App({ user, onLogout }) {
   // Sector rotation lifecycle
   const sectorRotation = useMemo(() => {
     const phases = ['Early Recovery', 'Expansion', 'Late Cycle', 'Recession'];
-    return sectorData.slice(0, 8).map((s, i) => {
+    return sectorData.slice(0, 8).map((s) => {
       const growth = filtered.filter(c => c.sector === s.sector).reduce((a, c) => a + c.growthMomentum, 0) / (filtered.filter(c => c.sector === s.sector).length || 1);
       const phase = growth > 20 ? 0 : growth > 10 ? 1 : growth > 0 ? 2 : 3;
       return { ...s, phase, phaseName: phases[phase], avgGrowth: growth };
@@ -679,7 +783,7 @@ export default function App({ user, onLogout }) {
   // ─── RISK DERIVED ─────────────────────────────────────────
   const riskBuckets = useMemo(() => {
     const buckets = Array.from({ length: 10 }, (_, i) => ({ range: `${i * 10}-${i * 10 + 10}`, count: 0, color: i < 3 ? P.emerald : i < 6 ? P.amber : P.rose }));
-    filtered.forEach(c => { const idx = Math.min(Math.floor(c.riskCoefficient / 10), 9); buckets[idx].count++; });
+    filtered.forEach(c => { const idx = Math.min(Math.floor((c.riskCoefficient ?? 0) / 10), 9); buckets[idx].count++; });
     return buckets;
   }, [filtered]);
 
@@ -694,8 +798,69 @@ export default function App({ user, onLogout }) {
   // Ticker data (must be before early return — hooks order)
   const tickerItems = useMemo(() => sortedFiltered.slice(0, 30), [sortedFiltered]);
 
-  if (data.length === 0) {
-    return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: P.slateD }}>Initializing Data Pipeline...</div>
+  if (!data.length && dataLoading) {
+    return (
+      <>
+        <ParticleCanvas />
+        <div className="page-shell" style={{ position: "relative", zIndex: 1, minHeight: "100vh", padding: "2rem 1rem" }}>
+          <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+            <div style={{ color: P.slateD, marginBottom: 16, fontSize: 14 }}>
+              Loading market data… This can take up to a minute while Yahoo Finance metrics load.
+            </div>
+            <div style={{ color: P.slateD, marginBottom: 20, fontSize: 12, opacity: 0.85 }}>
+              If this never finishes, start the API from the project folder:{" "}
+              <code style={{ color: P.gold }}>cd backend &amp;&amp; python app.py</code> (port 5000), then reload.
+            </div>
+            {[1, 2, 3, 4, 5, 6].map((k) => (
+              <div
+                key={k}
+                style={{
+                  background: "var(--skeleton-bg, #1e2030)",
+                  borderRadius: 8,
+                  height: 80,
+                  marginBottom: 12,
+                  animation: "pulse 1.5s ease-in-out infinite",
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!data.length && dataError) {
+    return (
+      <>
+        <ParticleCanvas />
+        <div className="page-shell" style={{ position: "relative", zIndex: 1, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+          <div style={{ color: "#ef4444", fontSize: 13, textAlign: "center", maxWidth: 400 }}>
+            {dataError}
+            <div style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                className="nav-tab on"
+                style={{ minHeight: 44, cursor: "pointer" }}
+                onClick={() => {
+                  setDataError(null);
+                  setReloadTick((t) => t + 1);
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!data.length) {
+    return (
+      <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: P.slateD }}>
+        No market data available.
+      </div>
+    );
   }
 
   return (
@@ -717,15 +882,15 @@ export default function App({ user, onLogout }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 24 }}>
               {[
-                { l: "Capital", v: `$${modalCompany.capitalGravity.toFixed(1)}B`, c: P.gold }, { l: "Revenue", v: `$${modalCompany.revenueFlow.toFixed(1)}B`, c: P.sky },
-                { l: "P/E", v: `${modalCompany.peRatio.toFixed(1)}x`, c: P.amber }, { l: "P/B", v: `${modalCompany.pbRatio.toFixed(2)}x`, c: P.sky },
-                { l: "D/E", v: modalCompany.debtEquity.toFixed(2), c: modalCompany.debtEquity > 2 ? P.rose : P.slate }, { l: "ROE", v: `${modalCompany.roe.toFixed(1)}%`, c: modalCompany.roe > 15 ? P.emerald : P.slate },
-                { l: "ROA", v: `${modalCompany.roa.toFixed(1)}%`, c: P.sky }, { l: "Beta", v: modalCompany.beta.toFixed(2), c: modalCompany.beta > 1.5 ? P.rose : P.emerald },
-                { l: "Sharpe", v: modalCompany.sharpeRatio.toFixed(2), c: modalCompany.sharpeRatio > 1.5 ? P.emerald : P.amber }, { l: "EBITDA %", v: `${modalCompany.ebitdaMargin.toFixed(1)}%`, c: P.emerald },
-                { l: "Div Yield", v: `${modalCompany.dividendYield.toFixed(2)}%`, c: P.gold }, { l: "FCF Yield", v: `${modalCompany.fcfYield.toFixed(2)}%`, c: P.sky },
-                { l: "Growth", v: `${modalCompany.growthMomentum > 0 ? "+" : ""}${modalCompany.growthMomentum.toFixed(1)}%`, c: modalCompany.growthMomentum > 0 ? P.emerald : P.rose },
-                { l: "Risk", v: modalCompany.riskCoefficient.toFixed(0), c: modalCompany.riskCoefficient > 60 ? P.rose : P.amber },
-                { l: "Liquidity", v: modalCompany.liquidityScore.toFixed(0), c: P.sky }, { l: "Efficiency", v: `${(modalCompany.efficiencyRatio * 100).toFixed(1)}%`, c: P.emerald },
+                { l: "Capital", v: (modalCompany.capitalGravity == null || Number.isNaN(modalCompany.capitalGravity)) ? "N/A" : `$${modalCompany.capitalGravity.toFixed(1)}B`, c: P.gold }, { l: "Revenue", v: (modalCompany.revenueFlow == null || Number.isNaN(modalCompany.revenueFlow)) ? "N/A" : `$${modalCompany.revenueFlow.toFixed(1)}B`, c: P.sky },
+                { l: "P/E", v: `${fmtNum(modalCompany.peRatio, 1, "x")}`, c: P.amber }, { l: "P/B", v: `${fmtNum(modalCompany.pbRatio, 2, "x")}`, c: P.sky },
+                { l: "D/E", v: fmtNum(modalCompany.debtEquity, 2), c: (modalCompany.debtEquity ?? 0) > 2 ? P.rose : P.slate }, { l: "ROE", v: `${fmtNum(modalCompany.roe, 1, "%")}`, c: (modalCompany.roe ?? 0) > 15 ? P.emerald : P.slate },
+                { l: "ROA", v: `${fmtNum(modalCompany.roa, 1, "%")}`, c: P.sky }, { l: "Beta", v: fmtNum(modalCompany.beta, 2), c: (modalCompany.beta ?? 0) > 1.5 ? P.rose : P.emerald },
+                { l: "Sharpe", v: fmtNum(modalCompany.sharpeRatio, 2), c: (modalCompany.sharpeRatio ?? 0) > 1.5 ? P.emerald : P.amber }, { l: "EBITDA %", v: `${fmtNum(modalCompany.ebitdaMargin, 1, "%")}`, c: P.emerald },
+                { l: "Div Yield", v: `${fmtNum(modalCompany.dividendYield, 2, "%")}`, c: P.gold }, { l: "FCF Yield", v: `${fmtNum(modalCompany.fcfYield, 2, "%")}`, c: P.sky },
+                { l: "Growth", v: `${(modalCompany.growthMomentum ?? 0) > 0 ? "+" : ""}${fmtNum(modalCompany.growthMomentum, 1, "%")}`, c: (modalCompany.growthMomentum ?? 0) > 0 ? P.emerald : P.rose },
+                { l: "Risk", v: fmtNum(modalCompany.riskCoefficient, 0), c: (modalCompany.riskCoefficient ?? 0) > 60 ? P.rose : P.amber },
+                { l: "Liquidity", v: fmtNum(modalCompany.liquidityScore, 0), c: P.sky }, { l: "Efficiency", v: `${fmtNum((modalCompany.efficiencyRatio ?? 0) * 100, 1, "%")}`, c: P.emerald },
               ].map((m, i) => (
                 <div key={i} className="card-flat" style={{ padding: "10px 12px", textAlign: "center" }}>
                   <div style={{ fontSize: 10, color: P.slateD, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>{m.l}</div>
@@ -749,7 +914,7 @@ export default function App({ user, onLogout }) {
               <div>
                 <div className="clabel">50-Day Price Trend</div>
                 <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={buildCompanySeries(modalCompany, 50)} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
+                  <AreaChart data={modalCompany.priceHistory?.length ? modalCompany.priceHistory : buildCompanySeries(modalCompany, 50)} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
                     <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
                     <XAxis dataKey="label" tick={{ fill: P.slateD, fontSize: 10 }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fill: P.slateD, fontSize: 10 }} tickLine={false} axisLine={false} />
@@ -769,8 +934,8 @@ export default function App({ user, onLogout }) {
           {[...tickerItems, ...tickerItems].map((c, i) => (
             <span key={i} className="ticker-item">
               <span className="name">{c.name}</span>
-              <span style={{ fontFamily: "DM Mono", color: P.gold }}>${c.sharePrice.toFixed(2)}</span>
-              <span className={c.growthMomentum > 0 ? "up" : "dn"}>{c.growthMomentum > 0 ? "+" : ""}{c.growthMomentum.toFixed(1)}%</span>
+              <span style={{ fontFamily: "DM Mono", color: P.gold }}>{fmtNum(c.sharePrice, 2, '', '$')}</span>
+              <span className={(c.growthMomentum ?? 0) > 0 ? "up" : "dn"}>{(c.growthMomentum ?? 0) > 0 ? "+" : ""}{fmtNum(c.growthMomentum, 1, '%')}</span>
             </span>
           ))}
         </div>
@@ -778,7 +943,7 @@ export default function App({ user, onLogout }) {
 
       <div className="root" style={{ position: "relative", zIndex: 1 }}>
         {/* ═══ HEADER ════════════════════════════════════════════════════════ */}
-        <div style={{ padding: "22px 28px 0", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ padding: "22px 0 0" }} className="page-shell">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -846,7 +1011,7 @@ export default function App({ user, onLogout }) {
         </div>
 
         {/* ═══ CONTENT ═══════════════════════════════════════════════════════ */}
-        <div style={{ flex: 1, padding: "20px 28px 40px", display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ flex: 1, padding: "20px 0 40px", display: "flex", flexDirection: "column", gap: 20 }} className="page-shell">
 
           {/* ░░ GLOBAL OVERVIEW ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ */}
           {tab === "global" && (
@@ -882,7 +1047,7 @@ export default function App({ user, onLogout }) {
                         <g>
                           <rect x={x + 1} y={y + 1} width={width - 2} height={height - 2} fill={c} fillOpacity={.65} stroke={P.bg} strokeWidth={2} rx={6} />
                           {width > 70 && <text x={x + width / 2} y={y + height / 2 - (height > 50 ? 8 : 0)} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={Math.min(14, width / 6)} fontFamily="Plus Jakarta Sans" fontWeight={600}>{name}</text>}
-                          {width > 70 && height > 50 && <text x={x + width / 2} y={y + height / 2 + 14} textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,.6)" fontSize={11} fontFamily="DM Mono">{(size / 1000).toFixed(1)}T</text>}
+                          {width > 70 && height > 50 && <text x={x + width / 2} y={y + height / 2 + 14} textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,.6)" fontSize={11} fontFamily="DM Mono">{size >= 1000 ? `${(size / 1000).toFixed(1)}T` : `${Number(size).toFixed(1)}B`}</text>}
                         </g>
                       )} />
                   </ResponsiveContainer>
@@ -1061,7 +1226,7 @@ export default function App({ user, onLogout }) {
           {/* ░░ COUNTRY ANALYSIS ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ */}
           {tab === "country" && (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <div className="mobile-country-bar" style={{ alignItems: "center", gap: 14 }}>
                 <span style={{ fontWeight: 700, color: P.white, fontSize: 14 }}>Analyzing Economy:</span>
                 <select className="sel" style={{ minWidth: 230, fontSize: 15, fontWeight: 600 }} value={country} onChange={e => setCountry(e.target.value)}>
                   {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1083,16 +1248,21 @@ export default function App({ user, onLogout }) {
               {selectedCompany ? (
                 <>
                   {/* Company KPIs */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(175px,1fr))", gap: 14 }}>
+                  <div className="metric-card-grid" style={{ gap: 14 }}>
                     {[
-                      { label: "Capital Gravity", val: `$${selectedCompany.capitalGravity.toFixed(1)}B`, color: P.gold },
-                      { label: "Revenue Flow", val: `$${selectedCompany.revenueFlow.toFixed(1)}B`, color: P.sky },
-                      { label: "Net Yield", val: `$${selectedCompany.netYield.toFixed(1)}B`, color: P.emerald },
-                      { label: "Valuation Index", val: `${selectedCompany.valuationIndex.toFixed(1)}x`, color: P.violet },
-                      { label: "Share Price", val: `£${selectedCompany.sharePrice.toFixed(0)}`, color: P.amber },
-                      { label: "Growth Momentum", val: `${selectedCompany.growthMomentum > 0 ? "+" : ""}${selectedCompany.growthMomentum.toFixed(1)}%`, color: selectedCompany.growthMomentum > 0 ? P.emerald : P.rose },
-                      { label: "Liquidity Score", val: selectedCompany.liquidityScore.toFixed(0), color: P.sky },
-                      { label: "Risk Coefficient", val: selectedCompany.riskCoefficient.toFixed(0), color: P.rose },
+                      { label: "Capital Gravity", val: (selectedCompany.capitalGravity == null || Number.isNaN(selectedCompany.capitalGravity)) ? "N/A" : `$${selectedCompany.capitalGravity.toFixed(1)}B`, color: P.gold },
+                      { label: "Revenue Flow", val: (selectedCompany.revenueFlow == null || Number.isNaN(selectedCompany.revenueFlow)) ? "N/A" : `$${selectedCompany.revenueFlow.toFixed(1)}B`, color: P.sky },
+                      { label: "Net Yield", val: (selectedCompany.netYield == null || Number.isNaN(selectedCompany.netYield)) ? "N/A" : `$${selectedCompany.netYield.toFixed(1)}B`, color: P.emerald },
+                      { label: "Valuation Index", val: fmtNum(selectedCompany.valuationIndex, 1, "x"), color: P.violet },
+                      { label: "Share Price", val: (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: selectedCompany.priceHistory?.length ? "#22c55e" : "#6b7280", animation: selectedCompany.priceHistory?.length ? "pulse 2s infinite" : "none", flexShrink: 0 }} />
+                          {fmtNum(selectedCompany.sharePrice, 2, '', '$')}
+                        </span>
+                      ), color: P.amber },
+                      { label: "Growth Momentum", val: `${(selectedCompany.growthMomentum ?? 0) > 0 ? "+" : ""}${fmtNum(selectedCompany.growthMomentum, 1, "%")}`, color: (selectedCompany.growthMomentum ?? 0) > 0 ? P.emerald : P.rose },
+                      { label: "Liquidity Score", val: fmtNum(selectedCompany.liquidityScore, 0), color: P.sky },
+                      { label: "Risk Coefficient", val: fmtNum(selectedCompany.riskCoefficient, 0), color: P.rose },
                     ].map((k, i) => (
                       <div key={i} className="card fu" style={{ padding: "16px 18px", animationDelay: `${i * .04}s` }}>
                         <div className="kl">{k.label}</div>
@@ -1102,15 +1272,15 @@ export default function App({ user, onLogout }) {
                   </div>
 
                   {/* Waterfall + Price Pulse */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+                  <div className="chart-split">
                     <div className="card" style={{ padding: "22px" }}>
                       <div className="clabel">Revenue Waterfall — {selectedCompany.name}</div>
                       <Waterfall items={companyWfItems || []} />
                     </div>
                     <div className="card" style={{ padding: "22px" }}>
                       <div className="clabel">Share Price Pulse — 50 Day</div>
-                      <ResponsiveContainer width="100%" height={210}>
-                        <LineChart data={companySeries || []} margin={{ left: 0, right: 10, top: 10, bottom: 0 }}>
+                      <ResponsiveContainer width="100%" height={chartH}>
+                        <LineChart data={companySeries || []} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>
                           <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
                           <XAxis dataKey="label" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
                           <YAxis tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
@@ -1173,7 +1343,7 @@ export default function App({ user, onLogout }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {countryCompanies.sort((a, b) => b.capitalGravity - a.capitalGravity).slice(0, 14).map((c, i) => (
+                          {countryCompanies.sort((a, b) => b.capitalGravity - a.capitalGravity).slice(0, 14).map((c) => (
                             <tr key={c.id} className="trow">
                               <td style={{ padding: "9px 10px", color: P.white, fontWeight: 600, fontSize: 12 }}>{c.name}</td>
                               <td style={{ padding: "9px 10px" }}><span className="badge" style={{ background: SECTOR_COLORS[c.sector] + "15", color: SECTOR_COLORS[c.sector] }}>{c.sector}</span></td>
@@ -1230,7 +1400,7 @@ export default function App({ user, onLogout }) {
                     <>
                       <ResponsiveContainer width="100%" height={260}>
                         <PieChart>
-                          <Pie data={portfolioEntries.map((e, i) => ({ name: e.company.name, value: e.alloc }))} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={100} paddingAngle={3}>
+                          <Pie data={portfolioEntries.map((e) => ({ name: e.company.name, value: e.alloc }))} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={100} paddingAngle={3}>
                             {portfolioEntries.map((e, i) => (<Cell key={i} fill={ACCENT[i % ACCENT.length]} fillOpacity={.85} />))}
                           </Pie>
                           <Tooltip content={<TT />} />
@@ -1398,7 +1568,7 @@ export default function App({ user, onLogout }) {
                     <div className="card slide-in-left" style={{ padding: "22px" }}>
                       <div className="clabel">Risk & Liquidity Breakdown</div>
                       <ResponsiveContainer width="100%" height={260}>
-                        <BarChart data={peerCompanies.map((c, i) => ({ name: c.name.length > 12 ? c.name.slice(0, 12) + "…" : c.name, Risk: c.riskCoefficient, Liquidity: c.liquidityScore }))} margin={{ left: 0, right: 0, bottom: 30 }}>
+                        <BarChart data={peerCompanies.map((c) => ({ name: c.name.length > 12 ? c.name.slice(0, 12) + "…" : c.name, Risk: c.riskCoefficient, Liquidity: c.liquidityScore }))} margin={{ left: 0, right: 0, bottom: 30 }}>
                           <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
                           <XAxis dataKey="name" tick={{ fill: P.slateD, fontSize: 11 }} tickLine={false} axisLine={false} angle={-15} textAnchor="end" />
                           <YAxis tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
@@ -1412,7 +1582,7 @@ export default function App({ user, onLogout }) {
                     <div className="card slide-in-right" style={{ padding: "22px" }}>
                       <div className="clabel">Efficiency & Valuation</div>
                       <ResponsiveContainer width="100%" height={260}>
-                        <BarChart data={peerCompanies.map((c, i) => ({ name: c.name.length > 12 ? c.name.slice(0, 12) + "…" : c.name, Efficiency: (c.efficiencyRatio * 100), Valuation: c.valuationIndex }))} margin={{ left: 0, right: 0, bottom: 30 }}>
+                        <BarChart data={peerCompanies.map((c) => ({ name: c.name.length > 12 ? c.name.slice(0, 12) + "…" : c.name, Efficiency: (c.efficiencyRatio * 100), Valuation: c.valuationIndex }))} margin={{ left: 0, right: 0, bottom: 30 }}>
                           <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
                           <XAxis dataKey="name" tick={{ fill: P.slateD, fontSize: 11 }} tickLine={false} axisLine={false} angle={-15} textAnchor="end" />
                           <YAxis tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
@@ -1616,7 +1786,7 @@ export default function App({ user, onLogout }) {
                     <XAxis dataKey="month" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
                     <Tooltip content={<TT />} />
-                    {sectorData.slice(0, 5).map((s, i) => (
+                    {sectorData.slice(0, 5).map((s) => (
                       <Area key={s.sector} type="monotone" dataKey={s.sector} name={s.sector} stackId="1" stroke={s.color} fill={s.color} fillOpacity={.25} strokeWidth={1.5} />
                     ))}
                     <Legend wrapperStyle={{ fontSize: 11 }} />
