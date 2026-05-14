@@ -9,6 +9,8 @@ import {
   mergeApiMetricsToCompany,
 } from "./services/marketAPI";
 import { fmtNum } from "./utils/formatMetric";
+import StockLab from "./components/StockLab";
+import { CompanyLogo } from "./components/CompanyLogo";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ScatterChart, Scatter, ZAxis, LineChart, Line, AreaChart, Area,
@@ -43,6 +45,12 @@ const GICS_COLORS = {
 
 // ─── HELPER FUNCTIONS ───────────────────────────────────────────────────────
 function rnd(a, b) { return Math.random() * (b - a) + a; }
+
+function finiteMean(values) {
+  const nums = (values || []).filter((x) => typeof x === "number" && !Number.isNaN(x));
+  if (!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
 
 // ─── DYNAMIC ROLLUP FUNCTIONS ───────────────────────────────────────────────
 function buildSectorRollup(companies) {
@@ -442,6 +450,57 @@ export default function App({ user, onLogout }) {
   }, [SECTORS]);
 
   const filtered = useMemo(() => data.filter(c => sector === "All" || c.sector === sector), [data, sector]);
+
+  /** Live-safe aggregates for dividend / income screens (ignores nulls). */
+  const dividendScreen = useMemo(() => {
+    const withYield = filtered.filter(
+      (c) => c.dividendYield != null && typeof c.dividendYield === "number" && !Number.isNaN(c.dividendYield)
+    );
+    const nonPayers = filtered.length - withYield.length;
+    return {
+      avgDivYield: finiteMean(withYield.map((c) => c.dividendYield)),
+      avgPE: finiteMean(filtered.map((c) => c.peRatio)),
+      avgPB: finiteMean(filtered.map((c) => c.pbRatio)),
+      avgROE: finiteMean(filtered.map((c) => c.roe)),
+      avgSharpe: finiteMean(filtered.map((c) => c.sharpeRatio)),
+      avgEbitda: finiteMean(filtered.map((c) => c.ebitdaMargin)),
+      avgPayout: finiteMean(filtered.map((c) => c.payoutRatioPct)),
+      avgDiv5Y: finiteMean(filtered.map((c) => c.divYield5YAvg)),
+      withYieldCount: withYield.length,
+      nonPayers,
+      scatterYield: filtered
+        .filter(
+          (c) =>
+            c.peRatio != null &&
+            !Number.isNaN(c.peRatio) &&
+            c.dividendYield != null &&
+            !Number.isNaN(c.dividendYield)
+        )
+        .slice(0, 80),
+    };
+  }, [filtered]);
+
+  const dividendSharpeLeaders = useMemo(
+    () =>
+      [...filtered]
+        .filter((c) => c.sharpeRatio != null && !Number.isNaN(c.sharpeRatio))
+        .sort((a, b) => b.sharpeRatio - a.sharpeRatio)
+        .slice(0, 10),
+    [filtered]
+  );
+
+  const roeDeScatter = useMemo(
+    () =>
+      filtered.filter(
+        (c) =>
+          c.debtEquity != null &&
+          !Number.isNaN(c.debtEquity) &&
+          c.roe != null &&
+          !Number.isNaN(c.roe)
+      ),
+    [filtered]
+  );
+
   const sectorData = useMemo(() => buildSectorRollup(filtered), [filtered]);
   const countryData = useMemo(() => buildCountryRollup(filtered), [filtered]);
   const countryDetail = useMemo(() => countryData.find(c => c.country === country) || countryData[0] || {}, [countryData, country]);
@@ -545,6 +604,7 @@ export default function App({ user, onLogout }) {
     { id: "risk", label: "Risk & Correlation" },
     { id: "history", label: "Historical Trends" },
     { id: "dividend", label: "Dividend & Yield" },
+    { id: "stocklab", label: "Stock Analysis" },
     { id: "montecarlo", label: "Monte Carlo" },
     { id: "technical", label: "Technical Indicators" },
   ];
@@ -1799,90 +1859,138 @@ export default function App({ user, onLogout }) {
           {/* ░░ DIVIDEND & YIELD ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ */}
           {tab === "dividend" && (
             <>
-              {/* KPIs */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(185px,1fr))", gap: 14 }}>
+              <div className="premium-hero card premium-card" style={{ padding: "22px 26px", marginBottom: 4 }}>
+                <div className="premium-title" style={{ fontSize: "clamp(1.15rem, 2.8vw, 1.65rem)" }}>Income &amp; shareholder yield</div>
+                <p className="premium-sub" style={{ maxWidth: 720, marginTop: 8 }}>
+                  Figures refresh with the batch quote feed (Yahoo Finance). Averages skip missing fields so NaNs never break the view. Compare trailing yield, payout pressure, and five-year history before you size a dividend sleeve.
+                </p>
+                <div className="premium-kpi-row" style={{ marginTop: 18 }}>
+                  <div>
+                    <div className="premium-metric-label">Universe</div>
+                    <div className="premium-metric-val">{filtered.length}</div>
+                  </div>
+                  <div>
+                    <div className="premium-metric-label">With TTM yield</div>
+                    <div className="premium-metric-val" style={{ color: P.emerald }}>{dividendScreen.withYieldCount}</div>
+                  </div>
+                  <div>
+                    <div className="premium-metric-label">No / zero yield</div>
+                    <div className="premium-metric-val" style={{ color: P.slate }}>{dividendScreen.nonPayers}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 14 }}>
                 {[
-                  { label: "Avg Dividend Yield", value: `${(filtered.reduce((a, c) => a + c.dividendYield, 0) / filtered.length).toFixed(2)}%`, color: P.gold },
-                  { label: "Avg P/E Ratio", value: `${(filtered.reduce((a, c) => a + c.peRatio, 0) / filtered.length).toFixed(1)}x`, color: P.amber },
-                  { label: "Avg P/B Ratio", value: `${(filtered.reduce((a, c) => a + c.pbRatio, 0) / filtered.length).toFixed(2)}x`, color: P.sky },
-                  { label: "Avg ROE", value: `${(filtered.reduce((a, c) => a + c.roe, 0) / filtered.length).toFixed(1)}%`, color: P.emerald },
-                  { label: "Avg Sharpe Ratio", value: `${(filtered.reduce((a, c) => a + c.sharpeRatio, 0) / filtered.length).toFixed(2)}`, color: P.violet },
-                  { label: "Avg EBITDA Margin", value: `${(filtered.reduce((a, c) => a + c.ebitdaMargin, 0) / filtered.length).toFixed(1)}%`, color: P.rose },
+                  { label: "Avg TTM yield (payers)", value: fmtNum(dividendScreen.avgDivYield, 2, "%", ""), color: P.gold },
+                  { label: "Avg P / E", value: fmtNum(dividendScreen.avgPE, 1, "x", ""), color: P.amber },
+                  { label: "Avg P / B", value: fmtNum(dividendScreen.avgPB, 2, "x", ""), color: P.sky },
+                  { label: "Avg ROE", value: fmtNum(dividendScreen.avgROE, 1, "%", ""), color: P.emerald },
+                  { label: "Avg Sharpe", value: fmtNum(dividendScreen.avgSharpe, 2, "", ""), color: P.violet },
+                  { label: "Avg EBITDA margin", value: fmtNum(dividendScreen.avgEbitda, 1, "%", ""), color: P.rose },
+                  { label: "Avg payout on earnings", value: fmtNum(dividendScreen.avgPayout, 1, "%", ""), color: P.amber },
+                  { label: "Avg 5Y yield (where known)", value: fmtNum(dividendScreen.avgDiv5Y, 2, "%", ""), color: P.emerald },
                 ].map((k, i) => (
-                  <div key={i} className="card fu" style={{ padding: "18px 20px", animationDelay: `${i * .05}s` }}>
+                  <div key={i} className="card fu premium-card" style={{ padding: "18px 20px", animationDelay: `${i * .05}s` }}>
                     <div className="kl">{k.label}</div>
-                    <div className="kv" style={{ color: k.color, fontSize: 24 }}>{k.value}</div>
+                    <div className="kv" style={{ color: k.color, fontSize: 22 }}>{k.value}</div>
                   </div>
                 ))}
               </div>
 
-              {/* Dividend Yield by Sector + P/E vs Div Scatter */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-                <div className="card slide-in-left" style={{ padding: "22px" }}>
-                  <div className="clabel">Dividend Yield by Sector</div>
+              <div className="chart-split" style={{ marginTop: 6 }}>
+                <div className="card slide-in-left premium-card" style={{ padding: "22px" }}>
+                  <div className="clabel">Dividend yield by sector (mean of payers)</div>
                   <ResponsiveContainer width="100%" height={280}>
-                    <BarChart data={sectorData.map(s => { const comps = filtered.filter(c => c.sector === s.sector); const avg = comps.reduce((a, c) => a + c.dividendYield, 0) / (comps.length || 1); return { sector: s.sector.length > 14 ? s.sector.slice(0, 14) + "…" : s.sector, Yield: avg, color: s.color }; })} layout="vertical" margin={{ left: 120, right: 12 }}>
+                    <BarChart
+                      data={sectorData.map((s) => {
+                        const comps = filtered.filter((c) => c.sector === s.sector);
+                        const divVals = comps.map((c) => c.dividendYield).filter((v) => v != null && typeof v === "number" && !Number.isNaN(v));
+                        const avg = finiteMean(divVals) ?? 0;
+                        return {
+                          sector: s.sector.length > 14 ? s.sector.slice(0, 14) + "…" : s.sector,
+                          Yield: avg,
+                          color: s.color,
+                        };
+                      })}
+                      layout="vertical"
+                      margin={{ left: 120, right: 12 }}
+                    >
                       <CartesianGrid stroke="rgba(255,255,255,.05)" horizontal={false} />
                       <XAxis type="number" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
-                      <YAxis type="category" dataKey="sector" tick={{ fill: P.slate, fontSize: 12, fontFamily: "Plus Jakarta Sans", fontWeight: 500 }} tickLine={false} width={120} />
+                      <YAxis type="category" dataKey="sector" tick={{ fill: P.slate, fontSize: 12, fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", fontWeight: 500 }} tickLine={false} width={120} />
                       <Tooltip content={<TT />} />
-                      <Bar dataKey="Yield" name="Avg Yield %" radius={[0, 5, 5, 0]}>
+                      <Bar dataKey="Yield" name="Avg yield %" radius={[0, 5, 5, 0]}>
                         {sectorData.map((s, i) => (<Cell key={i} fill={s.color} fillOpacity={.78} />))}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="card slide-in-right" style={{ padding: "22px" }}>
-                  <div className="clabel">P/E Ratio × Dividend Yield</div>
+                <div className="card slide-in-right premium-card" style={{ padding: "22px" }}>
+                  <div className="clabel">Valuation vs income — P / E × trailing yield</div>
                   <ResponsiveContainer width="100%" height={280}>
                     <ScatterChart margin={{ left: 10, right: 10, top: 10, bottom: 10 }}>
                       <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
-                      <XAxis dataKey="peRatio" name="P/E" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "P/E Ratio →", position: "insideBottom", offset: -5, fill: P.slateD, fontSize: 10 }} />
-                      <YAxis dataKey="dividendYield" name="Div Yield" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "Yield % →", angle: -90, position: "insideLeft", offset: 5, fill: P.slateD, fontSize: 10 }} />
+                      <XAxis dataKey="peRatio" name="P/E" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "P/E ratio →", position: "insideBottom", offset: -5, fill: P.slateD, fontSize: 10 }} />
+                      <YAxis dataKey="dividendYield" name="Div yield" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "Yield % →", angle: -90, position: "insideLeft", offset: 5, fill: P.slateD, fontSize: 10 }} />
                       <ZAxis dataKey="capitalGravity" range={[30, 200]} />
                       <Tooltip content={({ active, payload }) => {
                         if (!active || !payload?.length) return null;
                         const d = payload[0]?.payload;
-                        return (<div style={{ background: "#111827", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
-                          <div style={{ color: P.gold, fontWeight: 700 }}>{d?.name}</div>
-                          <div style={{ color: P.slateD, marginTop: 4 }}>P/E: <span style={{ color: P.amber, fontFamily: "DM Mono" }}>{d?.peRatio?.toFixed(1)}x</span></div>
-                          <div style={{ color: P.slateD }}>Yield: <span style={{ color: P.emerald, fontFamily: "DM Mono" }}>{d?.dividendYield?.toFixed(2)}%</span></div>
-                        </div>);
+                        return (
+                          <div style={{ background: "#111827", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+                            <div style={{ color: P.gold, fontWeight: 700 }}>{d?.name}</div>
+                            <div style={{ color: P.slateD, marginTop: 4 }}>P/E: <span style={{ color: P.amber, fontFamily: "DM Mono, monospace" }}>{fmtNum(d?.peRatio, 1, "x", "")}</span></div>
+                            <div style={{ color: P.slateD }}>Yield: <span style={{ color: P.emerald, fontFamily: "DM Mono, monospace" }}>{fmtNum(d?.dividendYield, 2, "%", "")}</span></div>
+                            <div style={{ color: P.slateD, marginTop: 4 }}>Payout: <span style={{ fontFamily: "DM Mono, monospace" }}>{fmtNum(d?.payoutRatioPct, 1, "%", "")}</span></div>
+                          </div>
+                        );
                       }} />
-                      <Scatter data={filtered.slice(0, 80)}>
-                        {filtered.slice(0, 80).map((c, i) => (<Cell key={i} fill={SECTOR_COLORS[c.sector] || P.gold} fillOpacity={.7} />))}
+                      <Scatter data={dividendScreen.scatterYield}>
+                        {dividendScreen.scatterYield.map((c, i) => (<Cell key={i} fill={SECTOR_COLORS[c.sector] || P.gold} fillOpacity={.7} />))}
                       </Scatter>
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
-              {/* Financial Metrics Table */}
-              <div className="card fade-in" style={{ padding: "22px" }}>
-                <div className="clabel">Fundamental & Risk Metrics — Top 15 Entities</div>
+              <div className="card fade-in premium-card" style={{ padding: "22px" }}>
+                <div className="clabel">Dividend quality — top 15 by market cap in view</div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr style={{ borderBottom: `1px solid ${P.border}` }}>
-                        {["Entity", "P/E", "P/B", "D/E", "ROE", "ROA", "Beta", "Sharpe", "EBITDA %", "Div Yield", "FCF Yield"].map(h => (
+                        {["Issuer", "P/E", "P/B", "D/E", "ROE", "ROA", "β", "Sharpe", "EBITDA %", "Div TTM", "FCF yield", "Payout", "5Y avg", "Ex-div", "$ / sh"].map((h) => (
                           <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: P.slateD, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {[...filtered].sort((a, b) => b.capitalGravity - a.capitalGravity).slice(0, 15).map(c => (
+                      {[...filtered].sort((a, b) => b.capitalGravity - a.capitalGravity).slice(0, 15).map((c) => (
                         <tr key={c.id} className="trow">
-                          <td style={{ padding: "8px 10px", color: P.white, fontWeight: 600, fontSize: 13 }}>{c.name}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.peRatio > 40 ? P.rose : P.amber, fontSize: 13 }}>{c.peRatio.toFixed(1)}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: P.sky, fontSize: 13 }}>{c.pbRatio.toFixed(2)}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.debtEquity > 2 ? P.rose : P.slate, fontSize: 13 }}>{c.debtEquity.toFixed(2)}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.roe > 15 ? P.emerald : c.roe < 0 ? P.rose : P.slate, fontSize: 13 }}>{c.roe.toFixed(1)}%</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.roa > 10 ? P.emerald : c.roa < 0 ? P.rose : P.slate, fontSize: 13 }}>{c.roa.toFixed(1)}%</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.beta > 1.5 ? P.rose : c.beta < 0.8 ? P.emerald : P.slate, fontSize: 13 }}>{c.beta.toFixed(2)}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.sharpeRatio > 1.5 ? P.emerald : c.sharpeRatio < 0 ? P.rose : P.amber, fontSize: 13 }}>{c.sharpeRatio.toFixed(2)}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.ebitdaMargin > 30 ? P.emerald : P.slate, fontSize: 13 }}>{c.ebitdaMargin.toFixed(1)}%</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: P.gold, fontSize: 13 }}>{c.dividendYield.toFixed(2)}%</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.fcfYield > 5 ? P.emerald : c.fcfYield < 0 ? P.rose : P.slate, fontSize: 13 }}>{c.fcfYield.toFixed(2)}%</td>
+                          <td style={{ padding: "8px 10px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <CompanyLogo company={c} size={32} radius={8} />
+                              <div>
+                                <div style={{ color: P.white, fontWeight: 600, fontSize: 13 }}>{c.name}</div>
+                                <div style={{ fontSize: 11, color: P.slateD, fontFamily: "DM Mono, monospace" }}>{c.symbol}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.peRatio != null && c.peRatio > 40 ? P.rose : P.amber, fontSize: 13 }}>{fmtNum(c.peRatio, 1, "", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: P.sky, fontSize: 13 }}>{fmtNum(c.pbRatio, 2, "", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.debtEquity != null && c.debtEquity > 2 ? P.rose : P.slate, fontSize: 13 }}>{fmtNum(c.debtEquity, 2, "", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.roe != null && c.roe > 15 ? P.emerald : c.roe != null && c.roe < 0 ? P.rose : P.slate, fontSize: 13 }}>{fmtNum(c.roe, 1, "%", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.roa != null && c.roa > 10 ? P.emerald : c.roa != null && c.roa < 0 ? P.rose : P.slate, fontSize: 13 }}>{fmtNum(c.roa, 1, "%", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.beta != null && c.beta > 1.5 ? P.rose : c.beta != null && c.beta < 0.8 ? P.emerald : P.slate, fontSize: 13 }}>{fmtNum(c.beta, 2, "", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.sharpeRatio != null && c.sharpeRatio > 1.5 ? P.emerald : c.sharpeRatio != null && c.sharpeRatio < 0 ? P.rose : P.amber, fontSize: 13 }}>{fmtNum(c.sharpeRatio, 2, "", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.ebitdaMargin != null && c.ebitdaMargin > 30 ? P.emerald : P.slate, fontSize: 13 }}>{fmtNum(c.ebitdaMargin, 1, "%", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: P.gold, fontSize: 13 }}>{fmtNum(c.dividendYield, 2, "%", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", color: c.fcfYield != null && c.fcfYield > 5 ? P.emerald : c.fcfYield != null && c.fcfYield < 0 ? P.rose : P.slate, fontSize: 13 }}>{fmtNum(c.fcfYield, 2, "%", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", fontSize: 13 }}>{fmtNum(c.payoutRatioPct, 1, "%", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", fontSize: 13 }}>{fmtNum(c.divYield5YAvg, 2, "%", "")}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", fontSize: 12, color: P.slate }}>{c.exDividendDate || "—"}</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono, monospace", fontSize: 13 }}>{fmtNum(c.dividendAnnual, 2, "", "$")}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1890,47 +1998,59 @@ export default function App({ user, onLogout }) {
                 </div>
               </div>
 
-              {/* Sharpe Comparison + ROE vs D/E */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-                <div className="card slide-in-left" style={{ padding: "22px" }}>
-                  <div className="clabel">Sharpe Ratio — Top 10</div>
+              <div className="chart-split">
+                <div className="card slide-in-left premium-card" style={{ padding: "22px" }}>
+                  <div className="clabel">Sharpe ratio — top 10 in view</div>
                   <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={[...filtered].sort((a, b) => b.sharpeRatio - a.sharpeRatio).slice(0, 10).map(c => ({ name: c.name.length > 12 ? c.name.slice(0, 12) + "…" : c.name, Sharpe: c.sharpeRatio }))} margin={{ left: 0, right: 0, bottom: 30 }}>
+                    <BarChart data={dividendSharpeLeaders.map((c) => ({ name: c.name.length > 12 ? c.name.slice(0, 12) + "…" : c.name, Sharpe: c.sharpeRatio }))} margin={{ left: 0, right: 0, bottom: 30 }}>
                       <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
                       <XAxis dataKey="name" tick={{ fill: P.slateD, fontSize: 11 }} tickLine={false} axisLine={false} angle={-15} textAnchor="end" />
                       <YAxis tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
                       <Tooltip content={<TT />} />
-                      <Bar dataKey="Sharpe" name="Sharpe Ratio" radius={[4, 4, 0, 0]}>
-                        {[...filtered].sort((a, b) => b.sharpeRatio - a.sharpeRatio).slice(0, 10).map((c, i) => (<Cell key={i} fill={c.sharpeRatio > 1.5 ? P.emerald : c.sharpeRatio > 0 ? P.amber : P.rose} fillOpacity={.8} />))}
+                      <Bar dataKey="Sharpe" name="Sharpe" radius={[4, 4, 0, 0]}>
+                        {dividendSharpeLeaders.map((c, i) => (<Cell key={i} fill={c.sharpeRatio > 1.5 ? P.emerald : c.sharpeRatio > 0 ? P.amber : P.rose} fillOpacity={.8} />))}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="card slide-in-right" style={{ padding: "22px" }}>
-                  <div className="clabel">ROE × Debt-to-Equity</div>
+                <div className="card slide-in-right premium-card" style={{ padding: "22px" }}>
+                  <div className="clabel">ROE × debt / equity</div>
                   <ResponsiveContainer width="100%" height={260}>
                     <ScatterChart margin={{ left: 10, right: 10, top: 10, bottom: 10 }}>
                       <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
-                      <XAxis dataKey="debtEquity" name="D/E" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "D/E Ratio →", position: "insideBottom", offset: -5, fill: P.slateD, fontSize: 10 }} />
+                      <XAxis dataKey="debtEquity" name="D/E" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "D/E →", position: "insideBottom", offset: -5, fill: P.slateD, fontSize: 10 }} />
                       <YAxis dataKey="roe" name="ROE" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} label={{ value: "ROE % →", angle: -90, position: "insideLeft", offset: 5, fill: P.slateD, fontSize: 10 }} />
                       <ZAxis dataKey="capitalGravity" range={[30, 200]} />
                       <Tooltip content={({ active, payload }) => {
                         if (!active || !payload?.length) return null;
                         const d = payload[0]?.payload;
-                        return (<div style={{ background: "#111827", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
-                          <div style={{ color: P.gold, fontWeight: 700 }}>{d?.name}</div>
-                          <div style={{ color: P.slateD, marginTop: 4 }}>D/E: <span style={{ color: P.amber, fontFamily: "DM Mono" }}>{d?.debtEquity?.toFixed(2)}</span></div>
-                          <div style={{ color: P.slateD }}>ROE: <span style={{ color: P.emerald, fontFamily: "DM Mono" }}>{d?.roe?.toFixed(1)}%</span></div>
-                        </div>);
+                        return (
+                          <div style={{ background: "#111827", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
+                            <div style={{ color: P.gold, fontWeight: 700 }}>{d?.name}</div>
+                            <div style={{ color: P.slateD, marginTop: 4 }}>D/E: <span style={{ color: P.amber, fontFamily: "DM Mono, monospace" }}>{fmtNum(d?.debtEquity, 2, "", "")}</span></div>
+                            <div style={{ color: P.slateD }}>ROE: <span style={{ color: P.emerald, fontFamily: "DM Mono, monospace" }}>{fmtNum(d?.roe, 1, "%", "")}</span></div>
+                          </div>
+                        );
                       }} />
-                      <Scatter data={filtered.slice(0, 80)}>
-                        {filtered.slice(0, 80).map((c, i) => (<Cell key={i} fill={SECTOR_COLORS[c.sector] || P.gold} fillOpacity={.7} />))}
+                      <Scatter data={roeDeScatter.slice(0, 80)}>
+                        {roeDeScatter.slice(0, 80).map((c, i) => (<Cell key={i} fill={SECTOR_COLORS[c.sector] || P.gold} fillOpacity={.7} />))}
                       </Scatter>
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
               </div>
             </>
+          )}
+
+          {/* ░░ STOCK ANALYSIS (lightweight-charts) ░░░░░░░░░░░░░░░░░░░░░░░░░ */}
+          {tab === "stocklab" && (
+            <div className="card premium-card slide-in-left" style={{ padding: "24px 26px", overflow: "hidden" }}>
+              <div className="premium-title" style={{ fontSize: "clamp(1.2rem, 2.8vw, 1.7rem)", marginBottom: 6 }}>Pro chart desk</div>
+              <p className="premium-sub" style={{ marginBottom: 18, maxWidth: 800 }}>
+                Same live pipeline as the rest of Meridian: OHLCV from your API, EMA overlays, histogram volume, and RSI for timing around income and quality work on the Dividend tab.
+              </p>
+              <StockLab companies={sortedFiltered} palette={P} chartHeight={400} />
+            </div>
           )}
 
           {/* ░░ MONTE CARLO SIMULATION ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ */}

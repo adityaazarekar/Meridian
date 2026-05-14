@@ -1,9 +1,43 @@
 """Maps yfinance ticker.info + price history to Meridian dashboard JSON fields."""
 
+from typing import Optional
+
+import datetime as _dt
 import json
 import math
+from urllib.parse import urlparse
 
 import pandas as pd
+
+
+def _logo_url(website: str) -> Optional[str]:
+    if not website or not isinstance(website, str):
+        return None
+    try:
+        p = urlparse(website.strip())
+        host = (p.netloc or "").lower()
+        if not host and p.path:
+            host = p.path.split("/")[0].lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if not host or "." not in host:
+            return None
+        return f"https://logo.clearbit.com/{host}"
+    except Exception:
+        return None
+
+
+def _fmt_ex_dividend(val) -> Optional[str]:
+    if val is None:
+        return None
+    try:
+        if isinstance(val, (int, float)) and val > 1e8:
+            return _dt.datetime.utcfromtimestamp(int(val)).strftime("%Y-%m-%d")
+        if isinstance(val, str) and len(val) >= 10:
+            return val[:10]
+        return str(val)[:32]
+    except Exception:
+        return None
 
 
 def safe(val, fallback=None):
@@ -96,6 +130,10 @@ def compute_metrics(info: dict, history_df) -> dict:
     trailing_eps = safe(info.get("trailingEps"))
     profit_margins = safe(info.get("profitMargins"))
     net_income_common = safe(info.get("netIncomeToCommon"))
+    payout_ratio = safe(info.get("payoutRatio"))
+    dividend_rate = safe(info.get("dividendRate"))
+    five_y_div = safe(info.get("fiveYearAvgDividendYield"))
+    ex_div_raw = info.get("exDividendDate")
 
     # ── PRICE CHANGE ──────────────────────────────────────────────────────────
     change = safe_round((price - prev_close) if price and prev_close else None)
@@ -109,6 +147,8 @@ def compute_metrics(info: dict, history_df) -> dict:
     pe = safe_round(trailing_pe or forward_pe)
     pb = safe_round(price_to_book)
     div_yield = safe_round(div_yield_raw * 100 if div_yield_raw is not None else None)
+    payout_pct = safe_round(payout_ratio * 100 if payout_ratio is not None else None)
+    div_yield_5y = safe_round(five_y_div * 100 if five_y_div is not None else None)
     fcf_yield = safe_round(
         (free_cashflow / mkt_cap * 100) if free_cashflow and mkt_cap and mkt_cap != 0 else None
     )
@@ -184,6 +224,11 @@ def compute_metrics(info: dict, history_df) -> dict:
         "exchange": info.get("exchange") or "",
         "description": info.get("longBusinessSummary") or "",
         "website": info.get("website") or "",
+        "logoUrl": _logo_url(info.get("website") or ""),
+        "payoutRatioPct": payout_pct,
+        "dividendAnnual": safe_round(dividend_rate),
+        "divYield5YAvg": div_yield_5y,
+        "exDividendDate": _fmt_ex_dividend(ex_div_raw),
         "price": safe_round(price),
         "prevClose": safe_round(prev_close),
         "open": safe_round(safe(info.get("open") or info.get("regularMarketOpen"))),

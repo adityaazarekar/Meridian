@@ -775,3 +775,119 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* ─── Premium desk / Stock Analysis ───────────────────── */
+.premium-card {
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.028) 42%, rgba(0, 0, 0, 0.12) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.06) inset,
+        0 18px 40px -24px rgba(0, 0, 0, 0.85);
+    border-radius: 14px;
+}
+
+.premium-hero {
+    border-radius: 16px;
+    background: linear-gradient(145deg, rgba(232, 184, 75, 0.08), rgba(15, 23, 42, 0.35));
+    border: 1px solid rgba(232, 184, 75, 0.15);
+    box-shadow: 0 20px 50px -30px rgba(0, 0, 0, 0.9);
+}
+
+.premium-title {
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #f8fafc;
+    line-height: 1.2;
+}
+
+.premium-sub,
+.premium-copy {
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    color: #94a3b8;
+    font-weight: 450;
+}
+
+.premium-kpi-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px 36px;
+}
+
+.premium-metric-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #64748b;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.premium-metric-val {
+    font-family: "DM Mono", ui-monospace, monospace;
+    font-size: 22px;
+    font-weight: 600;
+    color: #f1f5f9;
+}
+
+.premium-select {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    color: #e2e8f0;
+    padding: 8px 12px;
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+.stock-lab-wrap {
+    width: 100%;
+}
+
+.stock-lab-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 14px 0 10px;
+}
+
+.tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+.tool-chip.togg {
+    cursor: pointer;
+    user-select: none;
+}
+
+.tool-chip.togg input {
+    accent-color: #e8b84b;
+}
+
+.stock-chart-box {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 16px 48px -28px rgba(0, 0, 0, 0.9);
+    background: #070a10;
+}
+
+.premium-hint {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 8px;
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+}
