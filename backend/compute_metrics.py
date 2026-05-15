@@ -1,13 +1,49 @@
 """Maps yfinance ticker.info + price history to Meridian dashboard JSON fields."""
 
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import datetime as _dt
 import json
 import math
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from urllib.parse import urlparse
 
 import pandas as pd
+
+_FINNHUB_LOGO_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
+
+
+def _finnhub_logo(symbol: str) -> Optional[str]:
+    """Company logo URL from Finnhub profile2 (cached ~2h per symbol)."""
+    if not symbol:
+        return None
+    token = (os.environ.get("FINNHUB_TOKEN") or "").strip()
+    if not token:
+        return None
+    key = symbol.upper().strip()
+    now = time.time()
+    hit = _FINNHUB_LOGO_CACHE.get(key)
+    if hit and (now - hit[0]) < 7200:
+        return hit[1]
+    url = "https://finnhub.io/api/v1/stock/profile2?" + urllib.parse.urlencode(
+        {"symbol": key, "token": token}
+    )
+    out = None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "MeridianAnalytics/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        logo = data.get("logo")
+        if isinstance(logo, str) and logo.startswith("http"):
+            out = logo
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError):
+        out = None
+    _FINNHUB_LOGO_CACHE[key] = (now, out)
+    return out
 
 
 def _logo_url(website: str) -> Optional[str]:
@@ -215,6 +251,9 @@ def compute_metrics(info: dict, history_df) -> dict:
     else:
         risk_score = None
 
+    _sym = (info.get("symbol") or "").strip()
+    _fin_logo = _finnhub_logo(_sym) if _sym else None
+
     return {
         "name": info.get("longName") or info.get("shortName") or "",
         "ticker": info.get("symbol") or "",
@@ -224,6 +263,7 @@ def compute_metrics(info: dict, history_df) -> dict:
         "exchange": info.get("exchange") or "",
         "description": info.get("longBusinessSummary") or "",
         "website": info.get("website") or "",
+        "finnhubLogo": _fin_logo,
         "logoUrl": _logo_url(info.get("website") or ""),
         "payoutRatioPct": payout_pct,
         "dividendAnnual": safe_round(dividend_rate),

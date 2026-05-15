@@ -11,6 +11,7 @@ import {
 import { fmtNum } from "./utils/formatMetric";
 import StockLab from "./components/StockLab";
 import { CompanyLogo } from "./components/CompanyLogo";
+import { CountryFlag } from "./components/CountryFlag";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ScatterChart, Scatter, ZAxis, LineChart, Line, AreaChart, Area,
@@ -52,6 +53,116 @@ function finiteMean(values) {
   return nums.reduce((a, b) => a + b, 0) / nums.length;
 }
 
+/** Coerce market / chart numbers so rollups never become NaN. */
+function safeNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Sector treemap: `capitalGravity` is aggregate market cap in **billions USD**. */
+function formatCapGravityBn(bn) {
+  if (!Number.isFinite(bn) || bn < 0) return "—";
+  if (bn >= 1000) return `$${(bn / 1000).toFixed(2)}T`;
+  return `$${bn.toFixed(1)}B`;
+}
+
+function treemapShortName(name, maxPx, fontPx) {
+  if (!name) return "";
+  const approx = Math.max(4, Math.floor(maxPx / (fontPx * 0.52)) - 1);
+  if (name.length <= approx) return name;
+  return `${name.slice(0, Math.max(3, approx - 1))}…`;
+}
+
+/** Custom Recharts treemap cell — clipped labels, no NaNB, luxury strokes. */
+function TreemapSectorPremium(treemapProps) {
+  const { x, y, width, height, name, index, payload } = treemapProps;
+  const raw = payload?.size ?? payload?.value ?? treemapProps.size ?? treemapProps.value;
+  const cap = safeNum(raw, 0);
+  const c = payload?.color || "#e8b84b";
+  const inset = 2;
+  const rx = 4;
+  const ix = x + inset;
+  const iy = y + inset;
+  const iw = width - inset * 2;
+  const ih = height - inset * 2;
+  if (iw < 10 || ih < 10) return null;
+
+  const fs = Math.min(13, Math.max(9, iw / 11));
+  const shortName = treemapShortName(name, iw - 8, fs);
+  const valStr = formatCapGravityBn(cap);
+  const clipId = `tmclip-${index}-${Math.round(ix)}-${Math.round(iy)}`;
+
+  return (
+    <g className="treemap-sector-node">
+      <defs>
+        <clipPath id={clipId}>
+          <rect x={ix} y={iy} width={iw} height={ih} rx={rx} ry={rx} />
+        </clipPath>
+      </defs>
+      <title>{`${name} · ${valStr}`}</title>
+      <rect
+        x={ix}
+        y={iy}
+        width={iw}
+        height={ih}
+        fill={c}
+        fillOpacity={0.68}
+        stroke="#05080f"
+        strokeWidth={2}
+        rx={rx}
+        ry={rx}
+        style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,.45))" }}
+      />
+      <g clipPath={`url(#${clipId})`}>
+        {iw > 56 && ih > 26 && (
+          <text
+            x={ix + iw / 2}
+            y={iy + ih / 2 - (ih > 48 ? 8 : 0)}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill="#f8fafc"
+            fontSize={fs}
+            fontFamily="'Plus Jakarta Sans', system-ui, sans-serif"
+            fontWeight={600}
+          >
+            {shortName}
+          </text>
+        )}
+        {iw > 60 && ih > 46 && (
+          <text
+            x={ix + iw / 2}
+            y={iy + ih / 2 + 12}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill="rgba(248,250,252,0.58)"
+            fontSize={Math.max(9, fs - 2)}
+            fontFamily="'DM Mono', ui-monospace, monospace"
+          >
+            {valStr}
+          </text>
+        )}
+      </g>
+    </g>
+  );
+}
+
+function downloadTextFile(filename, text) {
+  try {
+    const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    /* noop */
+  }
+}
+
 // ─── DYNAMIC ROLLUP FUNCTIONS ───────────────────────────────────────────────
 function buildSectorRollup(companies) {
   const sectors = [...new Set(companies.map(c => c.sector))];
@@ -62,13 +173,13 @@ function buildSectorRollup(companies) {
     const g = companies.filter(c => c.sector === s);
     return {
       sector: s, short: s.slice(0, 12),
-      capitalGravity: g.reduce((a, c) => a + c.capitalGravity, 0),
-      revenueFlow: g.reduce((a, c) => a + c.revenueFlow, 0),
-      netYield: g.reduce((a, c) => a + c.netYield, 0),
+      capitalGravity: g.reduce((a, c) => a + safeNum(c.capitalGravity, 0), 0),
+      revenueFlow: g.reduce((a, c) => a + safeNum(c.revenueFlow, 0), 0),
+      netYield: g.reduce((a, c) => a + safeNum(c.netYield, 0), 0),
       count: g.length,
-      avgValuation: g.reduce((a, c) => a + c.valuationIndex, 0) / (g.length || 1),
-      avgGrowth: g.reduce((a, c) => a + c.growthMomentum, 0) / (g.length || 1),
-      avgLiquidity: g.reduce((a, c) => a + c.liquidityScore, 0) / (g.length || 1),
+      avgValuation: safeNum(g.reduce((a, c) => a + safeNum(c.valuationIndex, 0), 0) / (g.length || 1), 0),
+      avgGrowth: safeNum(g.reduce((a, c) => a + safeNum(c.growthMomentum, 0), 0) / (g.length || 1), 0),
+      avgLiquidity: safeNum(g.reduce((a, c) => a + safeNum(c.liquidityScore, 0), 0) / (g.length || 1), 0),
       color: SECTOR_COLORS[s],
     };
   }).sort((a, b) => b.capitalGravity - a.capitalGravity);
@@ -83,15 +194,15 @@ function buildCountryRollup(companies) {
     const g = companies.filter(c => c.country === cn);
     return {
       country: cn,
-      capitalGravity: g.reduce((a, c) => a + c.capitalGravity, 0),
-      revenueFlow: g.reduce((a, c) => a + c.revenueFlow, 0),
-      netYield: g.reduce((a, c) => a + c.netYield, 0),
+      capitalGravity: g.reduce((a, c) => a + safeNum(c.capitalGravity, 0), 0),
+      revenueFlow: g.reduce((a, c) => a + safeNum(c.revenueFlow, 0), 0),
+      netYield: g.reduce((a, c) => a + safeNum(c.netYield, 0), 0),
       count: g.length,
-      avgValuation: g.reduce((a, c) => a + c.valuationIndex, 0) / (g.length || 1),
-      avgGrowth: g.reduce((a, c) => a + c.growthMomentum, 0) / (g.length || 1),
-      avgLiquidity: g.reduce((a, c) => a + c.liquidityScore, 0) / (g.length || 1),
-      avgRisk: g.reduce((a, c) => a + c.riskCoefficient, 0) / (g.length || 1),
-      efficiencyRatio: g.reduce((a, c) => a + c.efficiencyRatio, 0) / (g.length || 1),
+      avgValuation: safeNum(g.reduce((a, c) => a + safeNum(c.valuationIndex, 0), 0) / (g.length || 1), 0),
+      avgGrowth: safeNum(g.reduce((a, c) => a + safeNum(c.growthMomentum, 0), 0) / (g.length || 1), 0),
+      avgLiquidity: safeNum(g.reduce((a, c) => a + safeNum(c.liquidityScore, 0), 0) / (g.length || 1), 0),
+      avgRisk: safeNum(g.reduce((a, c) => a + safeNum(c.riskCoefficient, 0), 0) / (g.length || 1), 0),
+      efficiencyRatio: safeNum(g.reduce((a, c) => a + safeNum(c.efficiencyRatio, 0), 0) / (g.length || 1), 0),
       color: COUNTRY_COLORS[cn]
     };
   }).sort((a, b) => b.capitalGravity - a.capitalGravity);
@@ -626,6 +737,21 @@ export default function App({ user, onLogout }) {
   };
   const watchedCompanies = useMemo(() => data.filter(c => watchlist.includes(c.id)), [data, watchlist]);
 
+  const exportWatchlistCsv = () => {
+    if (!watchedCompanies.length) return;
+    const esc = (v) => {
+      if (v == null || v === "") return "";
+      const s = String(v);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = "Symbol,Name,Country,Sector,Price,PE,DivYield,Beta";
+    const lines = watchedCompanies.map((c) =>
+      [c.symbol, esc(c.name), esc(c.country), esc(c.sector), esc(c.sharePrice), esc(c.peRatio), esc(c.dividendYield), esc(c.beta)].join(",")
+    );
+    downloadTextFile("meridian-watchlist.csv", [header, ...lines].join("\n"));
+  };
+
   // Anomaly detection
   const anomalies = useMemo(() => {
     const avgRisk = filtered.reduce((a, c) => a + c.riskCoefficient, 0) / (filtered.length || 1);
@@ -930,29 +1056,34 @@ export default function App({ user, onLogout }) {
       {/* ═══ COMPANY DEEP DIVE MODAL ═══ */}
       {modalCompany && (
         <div className="modal-overlay" onClick={() => setModalCompany(null)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
+          <div className="modal-content modal-lux" onClick={e => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setModalCompany(null)}>✕</button>
             <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-              <div style={{ width: 48, height: 48, borderRadius: 14, background: `${SECTOR_COLORS[modalCompany.sector]}22`, border: `2px solid ${SECTOR_COLORS[modalCompany.sector]}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>◈</div>
-              <div>
+              <CompanyLogo company={modalCompany} size={52} radius={14} />
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ color: P.white, fontSize: 22, fontWeight: 700, fontFamily: "'Playfair Display',serif", margin: 0 }}>{modalCompany.name}</h2>
-                <div style={{ fontSize: 12, color: P.slateD, marginTop: 3 }}>{modalCompany.sector} · {modalCompany.country}</div>
+                <div style={{ fontSize: 12, color: P.slateD, marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="badge" style={{ background: SECTOR_COLORS[modalCompany.sector] + "22", color: SECTOR_COLORS[modalCompany.sector] }}>{modalCompany.sector}</span>
+                  <CountryFlag country={modalCompany.country} size={18} />
+                  <span>{modalCompany.country}</span>
+                  <span style={{ fontFamily: "DM Mono, monospace", opacity: 0.85 }}>{modalCompany.symbol}</span>
+                </div>
               </div>
               {anomalies.has(modalCompany.id) && <span style={{ fontSize: 10, background: "rgba(251,113,133,.15)", color: P.rose, padding: "4px 10px", borderRadius: 12, fontWeight: 700 }}>⚠ ANOMALY</span>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 24 }}>
-              {[
-                { l: "Capital", v: (modalCompany.capitalGravity == null || Number.isNaN(modalCompany.capitalGravity)) ? "N/A" : `$${modalCompany.capitalGravity.toFixed(1)}B`, c: P.gold }, { l: "Revenue", v: (modalCompany.revenueFlow == null || Number.isNaN(modalCompany.revenueFlow)) ? "N/A" : `$${modalCompany.revenueFlow.toFixed(1)}B`, c: P.sky },
-                { l: "P/E", v: `${fmtNum(modalCompany.peRatio, 1, "x")}`, c: P.amber }, { l: "P/B", v: `${fmtNum(modalCompany.pbRatio, 2, "x")}`, c: P.sky },
-                { l: "D/E", v: fmtNum(modalCompany.debtEquity, 2), c: (modalCompany.debtEquity ?? 0) > 2 ? P.rose : P.slate }, { l: "ROE", v: `${fmtNum(modalCompany.roe, 1, "%")}`, c: (modalCompany.roe ?? 0) > 15 ? P.emerald : P.slate },
-                { l: "ROA", v: `${fmtNum(modalCompany.roa, 1, "%")}`, c: P.sky }, { l: "Beta", v: fmtNum(modalCompany.beta, 2), c: (modalCompany.beta ?? 0) > 1.5 ? P.rose : P.emerald },
-                { l: "Sharpe", v: fmtNum(modalCompany.sharpeRatio, 2), c: (modalCompany.sharpeRatio ?? 0) > 1.5 ? P.emerald : P.amber }, { l: "EBITDA %", v: `${fmtNum(modalCompany.ebitdaMargin, 1, "%")}`, c: P.emerald },
-                { l: "Div Yield", v: `${fmtNum(modalCompany.dividendYield, 2, "%")}`, c: P.gold }, { l: "FCF Yield", v: `${fmtNum(modalCompany.fcfYield, 2, "%")}`, c: P.sky },
-                { l: "Growth", v: `${(modalCompany.growthMomentum ?? 0) > 0 ? "+" : ""}${fmtNum(modalCompany.growthMomentum, 1, "%")}`, c: (modalCompany.growthMomentum ?? 0) > 0 ? P.emerald : P.rose },
-                { l: "Risk", v: fmtNum(modalCompany.riskCoefficient, 0), c: (modalCompany.riskCoefficient ?? 0) > 60 ? P.rose : P.amber },
-                { l: "Liquidity", v: fmtNum(modalCompany.liquidityScore, 0), c: P.sky }, { l: "Efficiency", v: `${fmtNum((modalCompany.efficiencyRatio ?? 0) * 100, 1, "%")}`, c: P.emerald },
-              ].map((m, i) => (
-                <div key={i} className="card-flat" style={{ padding: "10px 12px", textAlign: "center" }}>
+                {[
+                  { l: "Capital", v: (modalCompany.capitalGravity == null || Number.isNaN(modalCompany.capitalGravity)) ? "N/A" : `$${modalCompany.capitalGravity.toFixed(1)}B`, c: P.gold }, { l: "Revenue", v: (modalCompany.revenueFlow == null || Number.isNaN(modalCompany.revenueFlow)) ? "N/A" : `$${modalCompany.revenueFlow.toFixed(1)}B`, c: P.sky },
+                  { l: "P/E", v: `${fmtNum(modalCompany.peRatio, 1, "x")}`, c: P.amber }, { l: "P/B", v: `${fmtNum(modalCompany.pbRatio, 2, "x")}`, c: P.sky },
+                  { l: "D/E", v: fmtNum(modalCompany.debtEquity, 2), c: (modalCompany.debtEquity ?? 0) > 2 ? P.rose : P.slate }, { l: "ROE", v: `${fmtNum(modalCompany.roe, 1, "%")}`, c: (modalCompany.roe ?? 0) > 15 ? P.emerald : P.slate },
+                  { l: "ROA", v: `${fmtNum(modalCompany.roa, 1, "%")}`, c: P.sky }, { l: "Beta", v: fmtNum(modalCompany.beta, 2), c: (modalCompany.beta ?? 0) > 1.5 ? P.rose : P.emerald },
+                  { l: "Sharpe", v: fmtNum(modalCompany.sharpeRatio, 2), c: (modalCompany.sharpeRatio ?? 0) > 1.5 ? P.emerald : P.amber }, { l: "EBITDA %", v: `${fmtNum(modalCompany.ebitdaMargin, 1, "%")}`, c: P.emerald },
+                  { l: "Div Yield", v: `${fmtNum(modalCompany.dividendYield, 2, "%")}`, c: P.gold }, { l: "FCF Yield", v: `${fmtNum(modalCompany.fcfYield, 2, "%")}`, c: P.sky },
+                  { l: "Growth", v: `${(modalCompany.growthMomentum ?? 0) > 0 ? "+" : ""}${fmtNum(modalCompany.growthMomentum, 1, "%")}`, c: (modalCompany.growthMomentum ?? 0) > 0 ? P.emerald : P.rose },
+                  { l: "Risk", v: fmtNum(modalCompany.riskCoefficient, 0), c: (modalCompany.riskCoefficient ?? 0) > 60 ? P.rose : P.amber },
+                  { l: "Liquidity", v: fmtNum(modalCompany.liquidityScore, 0), c: P.sky }, { l: "Efficiency", v: `${fmtNum((modalCompany.efficiencyRatio ?? 0) * 100, 1, "%")}`, c: P.emerald },
+                ].map((m, i) => (
+                <div key={i} className="card-flat metric-tile-micro" style={{ padding: "10px 12px", textAlign: "center" }}>
                   <div style={{ fontSize: 10, color: P.slateD, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>{m.l}</div>
                   <div style={{ fontFamily: "DM Mono", fontSize: 16, color: m.c, fontWeight: 600 }}>{m.v}</div>
                 </div>
@@ -992,8 +1123,10 @@ export default function App({ user, onLogout }) {
       <div className="ticker-wrap">
         <div className="ticker-track">
           {[...tickerItems, ...tickerItems].map((c, i) => (
-            <span key={i} className="ticker-item">
+            <span key={i} className="ticker-item ticker-item-rich">
+              <CompanyLogo company={c} size={18} radius={6} />
               <span className="name">{c.name}</span>
+              <CountryFlag country={c.country} size={14} title={c.country} />
               <span style={{ fontFamily: "DM Mono", color: P.gold }}>{fmtNum(c.sharePrice, 2, '', '$')}</span>
               <span className={(c.growthMomentum ?? 0) > 0 ? "up" : "dn"}>{(c.growthMomentum ?? 0) > 0 ? "+" : ""}{fmtNum(c.growthMomentum, 1, '%')}</span>
             </span>
@@ -1036,9 +1169,18 @@ export default function App({ user, onLogout }) {
                 {searchFocused && globalSearchResults.length > 0 && (
                   <div className="search-results">
                     {globalSearchResults.map(c => (
-                      <div key={c.id} className="search-results-item" onClick={() => { setModalCompany(c); setGlobalSearch(''); setSearchFocused(false); }}>
-                        <span style={{ color: P.white, fontWeight: 600 }}>{c.name}</span>
-                        <span style={{ fontSize: 11, color: P.slateD }}>{c.sector} · ${c.capitalGravity.toFixed(1)}B</span>
+                      <div key={c.id} className="search-results-item micro-list-item" onClick={() => { setModalCompany(c); setGlobalSearch(''); setSearchFocused(false); }}>
+                        <CompanyLogo company={c} size={30} radius={8} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ color: P.white, fontWeight: 600 }}>{c.name}</span>
+                          <div style={{ fontSize: 11, color: P.slateD, marginTop: 2, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <CountryFlag country={c.country} size={14} />
+                            <span>{c.country}</span>
+                            <span style={{ fontFamily: "DM Mono, monospace" }}>{c.symbol}</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: P.slateD, marginTop: 4 }}>{c.sector} · ${c.capitalGravity.toFixed(1)}B mcap</div>
+                        </div>
+                        <span style={{ fontFamily: "DM Mono", color: P.gold, fontSize: 12 }}>{fmtNum(c.sharePrice, 2, "", "$")}</span>
                       </div>
                     ))}
                   </div>
@@ -1058,7 +1200,7 @@ export default function App({ user, onLogout }) {
           </div>
 
           {/* NAV */}
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", borderBottom: `1px solid ${P.border}`, paddingBottom: 14 }}>
+          <div className="nav-tab-rail" style={{ borderBottom: `1px solid ${P.border}`, paddingBottom: 14 }}>
             {TABS.map(t => (
               <button key={t.id} className={`nav-tab ${tab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>{t.label}</button>
             ))}
@@ -1086,7 +1228,7 @@ export default function App({ user, onLogout }) {
                   { label: "Economies Covered", value: COUNTRIES.length, delta: "Nations", up: null, spark: null, color: P.amber },
                   { label: "Sector Segments", value: SECTORS.length, delta: "Segments", up: null, spark: null, color: P.rose },
                 ].map((k, i) => (
-                  <div key={i} className="card fu" style={{ padding: "18px 20px", animationDelay: `${i * .05}s` }}>
+                  <div key={i} className="card-lux fu" style={{ animationDelay: `${i * .05}s` }}>
                     <div className="kl">{k.label}</div>
                     <div className="kv" style={{ color: k.color, fontSize: 24 }}>{k.value}</div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
@@ -1098,21 +1240,21 @@ export default function App({ user, onLogout }) {
               </div>
 
               {/* Treemap + Donut */}
-              <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 18 }}>
-                <div className="card" style={{ padding: "22px" }}>
+              <div className="chart-split treemap-donut-row">
+                <div className="card card-lux treemap-card">
                   <div className="clabel">Capital Distribution — Sector Treemap</div>
-                  <ResponsiveContainer width="100%" height={280}>
-                    <Treemap data={sectorData.map(s => ({ name: s.sector, size: s.capitalGravity, color: s.color }))} dataKey="size" aspectRatio={16 / 9}
-                      content={({ x, y, width, height, name, size, color: c }) => (
-                        <g>
-                          <rect x={x + 1} y={y + 1} width={width - 2} height={height - 2} fill={c} fillOpacity={.65} stroke={P.bg} strokeWidth={2} rx={6} />
-                          {width > 70 && <text x={x + width / 2} y={y + height / 2 - (height > 50 ? 8 : 0)} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={Math.min(14, width / 6)} fontFamily="Plus Jakarta Sans" fontWeight={600}>{name}</text>}
-                          {width > 70 && height > 50 && <text x={x + width / 2} y={y + height / 2 + 14} textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,.6)" fontSize={11} fontFamily="DM Mono">{size >= 1000 ? `${(size / 1000).toFixed(1)}T` : `${Number(size).toFixed(1)}B`}</text>}
-                        </g>
-                      )} />
+                  <ResponsiveContainer width="100%" height={300}>
+                    <Treemap
+                      data={sectorData.map((s) => ({ name: s.sector, size: safeNum(s.capitalGravity, 0), color: s.color }))}
+                      dataKey="size"
+                      aspectRatio={4 / 3}
+                      stroke="transparent"
+                      isAnimationActive={false}
+                      content={TreemapSectorPremium}
+                    />
                   </ResponsiveContainer>
                 </div>
-                <div className="card" style={{ padding: "22px" }}>
+                <div className="card card-lux">
                   <div className="clabel">Revenue Flow by Sector</div>
                   <ResponsiveContainer width="100%" height={240}>
                     <PieChart>
@@ -1201,8 +1343,12 @@ export default function App({ user, onLogout }) {
                           </td>
                           <td style={{ padding: "8px 10px", color: P.slateD, fontFamily: "DM Mono", fontSize: 12 }}>{String(i + 1).padStart(2, "0")}</td>
                           <td style={{ padding: "8px 10px", color: P.white, fontWeight: 600, fontSize: 13 }}>
-                            <span className="entity-link" onClick={() => setModalCompany(c)}>{c.name}</span>
-                            {anomalies.has(c.id) && <span style={{ marginLeft: 6, fontSize: 9, background: "rgba(251,113,133,.15)", color: P.rose, padding: "2px 6px", borderRadius: 10, fontWeight: 700 }}>⚠ ANOMALY</span>}
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
+                              <CompanyLogo company={c} size={28} radius={8} />
+                              <CountryFlag country={c.country} size={16} />
+                              <span className="entity-link issuer-cell-name" onClick={() => setModalCompany(c)}>{c.name}</span>
+                              {anomalies.has(c.id) && <span style={{ fontSize: 9, background: "rgba(251,113,133,.15)", color: P.rose, padding: "2px 6px", borderRadius: 10, fontWeight: 700 }}>⚠ ANOMALY</span>}
+                            </div>
                           </td>
                           <td style={{ padding: "8px 10px" }}><span className="badge" style={{ background: SECTOR_COLORS[c.sector] + "18", color: SECTOR_COLORS[c.sector] }}>{c.sector}</span></td>
                           <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: P.gold, fontSize: 13 }}>{c.capitalGravity.toFixed(1)}B</td>
@@ -1221,15 +1367,27 @@ export default function App({ user, onLogout }) {
               {/* Watchlist Panel */}
               {watchedCompanies.length > 0 && (
                 <div className="card scale-in" style={{ padding: "22px" }}>
-                  <div className="clabel">Your Watchlist — {watchedCompanies.length} Entities</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+                    <div className="clabel" style={{ marginBottom: 0 }}>Your Watchlist — {watchedCompanies.length} Entities</div>
+                    <button type="button" className="btn-export-csv" onClick={exportWatchlistCsv}>Export CSV</button>
+                  </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12 }}>
                     {watchedCompanies.map((c, i) => (
-                      <div key={c.id} className="card-flat fu" style={{ padding: "14px 16px", animationDelay: `${i * .04}s`, borderLeft: `3px solid ${SECTOR_COLORS[c.sector]}` }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ fontWeight: 600, fontSize: 13, color: P.white }}>{c.name}</span>
-                          <span style={{ cursor: "pointer", color: P.gold, fontSize: 14 }} onClick={() => toggleWatch(c.id)}>★</span>
+                      <div key={c.id} className="card-flat fu watchlist-card" style={{ padding: "14px 16px", animationDelay: `${i * .04}s`, borderLeft: `3px solid ${SECTOR_COLORS[c.sector]}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6, gap: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                            <CompanyLogo company={c} size={32} radius={9} />
+                            <div style={{ minWidth: 0 }}>
+                              <span style={{ fontWeight: 600, fontSize: 13, color: P.white, display: "block" }}>{c.name}</span>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                                <CountryFlag country={c.country} size={14} />
+                                <span style={{ fontSize: 10, color: P.slateD }}>{c.symbol}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <span style={{ cursor: "pointer", color: P.gold, fontSize: 14, flexShrink: 0 }} onClick={() => toggleWatch(c.id)}>★</span>
                         </div>
-                        <div style={{ fontSize: 11, color: P.slateD, marginBottom: 6 }}>{c.sector} · {c.country}</div>
+                        <div style={{ fontSize: 11, color: P.slateD, marginBottom: 6 }}>{c.sector}</div>
                         <div style={{ display: "flex", gap: 12, fontSize: 12, fontFamily: "DM Mono" }}>
                           <span style={{ color: P.gold }}>{c.capitalGravity.toFixed(1)}B</span>
                           <span style={{ color: c.growthMomentum > 0 ? P.emerald : P.rose }}>{c.growthMomentum > 0 ? "+" : ""}{c.growthMomentum.toFixed(1)}%</span>
@@ -1288,6 +1446,7 @@ export default function App({ user, onLogout }) {
             <>
               <div className="mobile-country-bar" style={{ alignItems: "center", gap: 14 }}>
                 <span style={{ fontWeight: 700, color: P.white, fontSize: 14 }}>Analyzing Economy:</span>
+                <CountryFlag country={country} size={22} />
                 <select className="sel" style={{ minWidth: 230, fontSize: 15, fontWeight: 600 }} value={country} onChange={e => setCountry(e.target.value)}>
                   {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
@@ -1299,7 +1458,9 @@ export default function App({ user, onLogout }) {
                   ))}
                 </select>
                 {selectedCompany && (
-                  <span className="badge" style={{ background: SECTOR_COLORS[selectedCompany.sector] + "18", color: SECTOR_COLORS[selectedCompany.sector] }}>
+                  <span className="badge company-lens-badge" style={{ background: SECTOR_COLORS[selectedCompany.sector] + "18", color: SECTOR_COLORS[selectedCompany.sector], display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <CompanyLogo company={selectedCompany} size={22} radius={6} />
+                    <CountryFlag country={selectedCompany.country} size={14} />
                     Company Lens: {selectedCompany.name}
                   </span>
                 )}
@@ -1405,7 +1566,13 @@ export default function App({ user, onLogout }) {
                         <tbody>
                           {countryCompanies.sort((a, b) => b.capitalGravity - a.capitalGravity).slice(0, 14).map((c) => (
                             <tr key={c.id} className="trow">
-                              <td style={{ padding: "9px 10px", color: P.white, fontWeight: 600, fontSize: 12 }}>{c.name}</td>
+                              <td style={{ padding: "9px 10px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                  <CompanyLogo company={c} size={26} radius={7} />
+                                  <CountryFlag country={c.country} size={15} />
+                                  <span style={{ color: P.white, fontWeight: 600, fontSize: 12, cursor: "pointer" }} onClick={() => setModalCompany(c)}>{c.name}</span>
+                                </div>
+                              </td>
                               <td style={{ padding: "9px 10px" }}><span className="badge" style={{ background: SECTOR_COLORS[c.sector] + "15", color: SECTOR_COLORS[c.sector] }}>{c.sector}</span></td>
                               <td style={{ padding: "9px 10px", fontFamily: "DM Mono", color: P.gold, fontSize: 11 }}>{c.capitalGravity.toFixed(1)}B</td>
                               <td style={{ padding: "9px 10px", fontFamily: "DM Mono", color: c.growthMomentum > 0 ? P.emerald : P.rose, fontSize: 11 }}>{c.growthMomentum > 0 ? "+" : ""}{c.growthMomentum.toFixed(1)}%</td>
@@ -1430,6 +1597,7 @@ export default function App({ user, onLogout }) {
                   Build a simulated portfolio. Budget: <span style={{ color: P.gold, fontFamily: "DM Mono", fontSize: 16 }}>{portfolioBudget}%</span> — Allocated: <span style={{ color: portfolioTotalAlloc > 100 ? P.rose : P.emerald, fontFamily: "DM Mono", fontSize: 16 }}>{portfolioTotalAlloc.toFixed(0)}%</span>
                 </div>
                 <div style={{ flex: 1 }} />
+                <CountryFlag country={portfolioCountry === "All" ? null : portfolioCountry} size={18} />
                 <select className="sel" value={portfolioCountry} onChange={e => { setPortfolioCountry(e.target.value); setPortfolio({}); }}>
                   <option value="All">All Countries</option>
                   {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1443,8 +1611,10 @@ export default function App({ user, onLogout }) {
                   {[...(portfolioCountry === "All" ? filtered : filtered.filter(c => c.country === portfolioCountry))].sort((a, b) => b.capitalGravity - a.capitalGravity).slice(0, 30).map((c, i) => {
                     const alloc = portfolio[c.id] || 0;
                     return (
-                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, animationDelay: `${i * .02}s` }} className="fu">
-                        <div style={{ width: 170, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, color: P.white, fontWeight: 500 }}>{c.name}</div>
+                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, animationDelay: `${i * .02}s` }} className="fu portfolio-alloc-row">
+                        <CompanyLogo company={c} size={28} radius={8} />
+                        <CountryFlag country={c.country} size={15} />
+                        <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, color: P.white, fontWeight: 500 }}>{c.name}</div>
                         <input type="range" className="alloc-slider" min={0} max={40} step={1} value={alloc}
                           onChange={e => setPortfolio(p => ({ ...p, [c.id]: Number(e.target.value) }))} />
                         <div style={{ width: 40, textAlign: "right", fontFamily: "DM Mono", fontSize: 14, color: alloc > 0 ? P.gold : P.slateD }}>{alloc}%</div>
@@ -1467,7 +1637,13 @@ export default function App({ user, onLogout }) {
                         </PieChart>
                       </ResponsiveContainer>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 12px", marginTop: 8 }}>
-                        {portfolioEntries.map((e, i) => (<div key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}><div style={{ width: 8, height: 8, borderRadius: 2, background: ACCENT[i % ACCENT.length] }} /><span style={{ fontSize: 10, color: P.slateD }}>{e.company.name} ({e.alloc}%)</span></div>))}
+                        {portfolioEntries.map((e, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <CompanyLogo company={e.company} size={18} radius={5} />
+                            <div style={{ width: 8, height: 8, borderRadius: 2, background: ACCENT[i % ACCENT.length] }} />
+                            <span style={{ fontSize: 10, color: P.slateD }}>{e.company.name} ({e.alloc}%)</span>
+                          </div>
+                        ))}
                       </div>
                     </>
                   ) : (
@@ -1528,19 +1704,24 @@ export default function App({ user, onLogout }) {
                   {peerSearchResults.length > 0 && (
                     <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#1e293b", border: `1px solid ${P.border}`, borderRadius: 10, marginTop: 4, zIndex: 10, maxHeight: 220, overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.6)" }}>
                       {peerSearchResults.map(c => (
-                        <div key={c.id} style={{ padding: "8px 14px", fontSize: 12, color: P.white, cursor: "pointer", transition: "background .15s", borderBottom: `1px solid ${P.border}` }}
+                        <div key={c.id} className="micro-list-item" style={{ padding: "8px 14px", fontSize: 12, color: P.white, cursor: "pointer", transition: "background .15s", borderBottom: `1px solid ${P.border}`, display: "flex", alignItems: "center", gap: 10 }}
                           onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,.06)"}
                           onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                           onClick={() => { setPeerIds(p => [...p, c.id].slice(0, 4)); setPeerSearch(""); }}>
-                          {c.name} <span style={{ color: P.slateD, fontSize: 10 }}>· {c.sector}</span>
+                          <CompanyLogo company={c} size={26} radius={7} />
+                          <CountryFlag country={c.country} size={14} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {c.name} <span style={{ color: P.slateD, fontSize: 10 }}>· {c.sector}</span>
+                          </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
                 {peerCompanies.map((c, i) => (
-                  <button key={c.id} className="peer-btn active" style={{ animationDelay: `${i * .05}s` }} onClick={() => setPeerIds(p => p.filter(id => id !== c.id))}>
-                    {c.name} ✕
+                  <button key={c.id} type="button" className="peer-btn active peer-btn-rich" style={{ animationDelay: `${i * .05}s`, display: "inline-flex", alignItems: "center", gap: 8 }} onClick={() => setPeerIds(p => p.filter(id => id !== c.id))}>
+                    <CompanyLogo company={c} size={20} radius={6} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>{c.name}</span> ✕
                   </button>
                 ))}
                 {peerIds.length > 0 && (<button className="peer-btn" onClick={() => setPeerIds([])}>Clear All</button>)}
@@ -1551,9 +1732,19 @@ export default function App({ user, onLogout }) {
                   {/* Head-to-Head KPIs */}
                   <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(peerCompanies.length, 4)},1fr)`, gap: 14 }}>
                     {peerCompanies.map((c, i) => (
-                      <div key={c.id} className="card scale-in" style={{ padding: "18px", animationDelay: `${i * .08}s`, borderTop: `3px solid ${ACCENT[i % ACCENT.length]}` }}>
-                        <div style={{ fontWeight: 700, fontSize: 13, color: P.white, marginBottom: 4 }}>{c.name}</div>
-                        <div style={{ fontSize: 10, color: P.slateD, marginBottom: 12 }}>{c.sector} · {c.country}</div>
+                      <div key={c.id} className="card scale-in peer-kpi-card" style={{ padding: "18px", animationDelay: `${i * .08}s`, borderTop: `3px solid ${ACCENT[i % ACCENT.length]}` }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                          <CompanyLogo company={c} size={36} radius={10} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: P.white }}>{c.name}</div>
+                            <div style={{ fontSize: 10, color: P.slateD, marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              <CountryFlag country={c.country} size={14} />
+                              <span>{c.country}</span>
+                              <span>·</span>
+                              <span>{c.sector}</span>
+                            </div>
+                          </div>
+                        </div>
                         {[
                           { l: "Capital", v: `$${c.capitalGravity.toFixed(1)}B`, c: P.gold },
                           { l: "Revenue", v: `$${c.revenueFlow.toFixed(1)}B`, c: P.sky },
@@ -1971,6 +2162,7 @@ export default function App({ user, onLogout }) {
                           <td style={{ padding: "8px 10px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                               <CompanyLogo company={c} size={32} radius={8} />
+                              <CountryFlag country={c.country} size={16} />
                               <div>
                                 <div style={{ color: P.white, fontWeight: 600, fontSize: 13 }}>{c.name}</div>
                                 <div style={{ fontSize: 11, color: P.slateD, fontFamily: "DM Mono, monospace" }}>{c.symbol}</div>
