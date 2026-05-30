@@ -27,8 +27,8 @@ _fe = os.environ.get("FRONTEND_URL")
 if _fe and _fe.strip() and _fe.strip() != "*":
     _origins.append(_fe.strip())
 
-# Only apply CORS for the API routes — the frontend is same-origin in production
-CORS(app, origins=_origins, resources={r"/api/*": {"origins": _origins}})
+# Allow all origins for the public API routes to prevent CORS blocks on Vercel
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 
 @app.route("/health")
