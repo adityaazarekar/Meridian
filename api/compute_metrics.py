@@ -86,7 +86,6 @@ def _get_usd_rate(currency: str) -> float:
     return 1.0
 
 
-
 def _finnhub_logo(symbol: str) -> Optional[str]:
     """Company logo URL from Finnhub profile2 (cached ~2h per symbol)."""
     if not symbol:

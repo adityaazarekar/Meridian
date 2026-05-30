@@ -1267,7 +1267,7 @@ export default function App({ user, onLogout }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 24 }}>
                 {[
-                  { l: "Capital", v: (modalCompany.capitalGravity == null || Number.isNaN(modalCompany.capitalGravity)) ? "N/A" : fmtUsdBn(modalCompany.capitalGravity), c: P.gold }, { l: "Revenue", v: (modalCompany.revenueFlow == null || Number.isNaN(modalCompany.revenueFlow)) ? "N/A" : fmtUsdBn(modalCompany.revenueFlow), c: P.sky },
+                  { l: "Capital (USD)", v: (modalCompany.capitalGravity == null || Number.isNaN(modalCompany.capitalGravity)) ? "N/A" : fmtUsdBn(modalCompany.capitalGravity), c: P.gold }, { l: "Revenue (USD)", v: (modalCompany.revenueFlow == null || Number.isNaN(modalCompany.revenueFlow)) ? "N/A" : fmtUsdBn(modalCompany.revenueFlow), c: P.sky },
                   { l: "Price", v: fmtLocalPrice(modalCompany.sharePrice, modalCompany.currency), c: P.amber },
                   { l: "P/E", v: `${fmtNum(modalCompany.peRatio, 1, "x")}`, c: P.amber }, { l: "P/B", v: `${fmtNum(modalCompany.pbRatio, 2, "x")}`, c: P.sky },
                   { l: "D/E", v: fmtNum(modalCompany.debtEquity, 2), c: (modalCompany.debtEquity ?? 0) > 2 ? P.rose : P.slate }, { l: "ROE", v: `${fmtNum(modalCompany.roe, 1, "%")}`, c: (modalCompany.roe ?? 0) > 15 ? P.emerald : P.slate },

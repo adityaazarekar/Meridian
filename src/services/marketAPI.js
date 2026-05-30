@@ -144,6 +144,7 @@ export function mergeApiMetricsToCompany(row, metrics) {
     // capitalGravity / revenueFlow / netYield are always in USD billions.
     currency: metrics.currency || row.currency || 'USD',
     financialCurrency: metrics.financialCurrency || row.financialCurrency || 'USD',
+    usdRate: metrics.usdRate ?? row.usdRate ?? 1.0,
     website: metrics.website || row.website || null,
     logoUrl: metrics.logoUrl || row.logoUrl || null,
     finnhubLogo: metrics.finnhubLogo ?? row.finnhubLogo ?? null,
