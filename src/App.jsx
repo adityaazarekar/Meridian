@@ -117,28 +117,29 @@ function TreemapSectorPremium(treemapProps) {
         {iw > 56 && ih > 26 && (
           <text
             x={ix + iw / 2}
-            y={iy + ih / 2 - (ih > 48 ? 8 : 0)}
+            y={iy + ih / 2}
             textAnchor="middle"
             dominantBaseline="middle"
             fill="#f8fafc"
-            fontSize={fs}
             fontFamily="'Plus Jakarta Sans', system-ui, sans-serif"
             fontWeight={600}
+            fontSize={fs}
           >
-            {shortName}
-          </text>
-        )}
-        {iw > 60 && ih > 46 && (
-          <text
-            x={ix + iw / 2}
-            y={iy + ih / 2 + 12}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fill="rgba(248,250,252,0.58)"
-            fontSize={Math.max(9, fs - 2)}
-            fontFamily="'DM Mono', ui-monospace, monospace"
-          >
-            {valStr}
+            <tspan x={ix + iw / 2} dy={iw > 60 && ih > 46 ? "-0.6em" : "0em"}>
+              {shortName}
+            </tspan>
+            {iw > 60 && ih > 46 && (
+              <tspan
+                x={ix + iw / 2}
+                dy="1.2em"
+                fill="rgba(248,250,252,0.58)"
+                fontSize={Math.max(9, fs - 2)}
+                fontFamily="'DM Mono', ui-monospace, monospace"
+                fontWeight={400}
+              >
+                {valStr}
+              </tspan>
+            )}
           </text>
         )}
       </g>
@@ -1485,8 +1486,8 @@ export default function App({ user, onLogout }) {
                   <ResponsiveContainer width="100%" height={260}>
                     <ScatterChart margin={{ left: 0, right: 10, top: 5 }}>
                       <CartesianGrid stroke="rgba(255,255,255,.05)" strokeDasharray="4 4" />
-                      <XAxis dataKey="avgGrowth" name="Growth Momentum" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
-                      <YAxis dataKey="avgLiquidity" name="Liquidity Score" tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
+                      <XAxis dataKey="avgGrowth" name="Growth Momentum" tickFormatter={(val) => typeof val === 'number' ? Number(val.toFixed(2)) : val} tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
+                      <YAxis dataKey="avgLiquidity" name="Liquidity Score" tickFormatter={(val) => typeof val === 'number' ? Number(val.toFixed(2)) : val} tick={{ fill: P.slateD, fontSize: 12 }} tickLine={false} axisLine={false} />
                       <ZAxis dataKey="capitalGravity" range={[40, 300]} />
                       <Tooltip content={({ active, payload }) => {
                         if (!active || !payload?.length) return null;

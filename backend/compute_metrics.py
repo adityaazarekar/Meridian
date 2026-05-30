@@ -38,6 +38,21 @@ def _get_usd_rate(currency: str) -> float:
     cached = _FX_CACHE.get(code)
     if cached and (now - cached[0]) < _FX_TTL:
         return cached[1]
+    
+    # 1. Try fetching the exchange rate using history (extremely reliable endpoint)
+    try:
+        ticker_sym = f"{code}USD=X"
+        ticker = yf.Ticker(ticker_sym)
+        hist = ticker.history(period="1d")
+        if not hist.empty:
+            rate = hist["Close"].iloc[-1]
+            if rate and isinstance(rate, (int, float)) and rate > 0:
+                _FX_CACHE[code] = (now, float(rate))
+                return float(rate)
+    except Exception:
+        pass
+
+    # 2. Fall back to the info endpoint
     try:
         ticker_sym = f"{code}USD=X"
         info = yf.Ticker(ticker_sym).info
@@ -51,9 +66,25 @@ def _get_usd_rate(currency: str) -> float:
             return float(rate)
     except Exception:
         pass
+
+    # 3. Fall back to a reverse lookup (e.g. USD/KRW)
+    try:
+        ticker_sym = f"USD{code}=X"
+        ticker = yf.Ticker(ticker_sym)
+        hist = ticker.history(period="1d")
+        if not hist.empty:
+            rate = hist["Close"].iloc[-1]
+            if rate and isinstance(rate, (int, float)) and rate > 0:
+                inv_rate = 1.0 / float(rate)
+                _FX_CACHE[code] = (now, inv_rate)
+                return inv_rate
+    except Exception:
+        pass
+
     # If fetch fails, cache a sentinel 1.0 for a short period to avoid hammering
     _FX_CACHE[code] = (now, 1.0)
     return 1.0
+
 
 
 def _finnhub_logo(symbol: str) -> Optional[str]:
@@ -211,7 +242,7 @@ def compute_metrics(info: dict, history_df) -> dict:
 
     # ── USD CONVERSION ────────────────────────────────────────────────────────
     # marketCap is shares * price, so it uses price_currency
-    mkt_cap = (mkt_cap_local * fin_usd_rate) if mkt_cap_local is not None else None
+    mkt_cap = (mkt_cap_local * price_usd_rate) if mkt_cap_local is not None else None
     total_revenue = (total_revenue_local * fin_usd_rate) if total_revenue_local is not None else None
     ebitda = (ebitda_local * fin_usd_rate) if ebitda_local is not None else None
     free_cashflow = (free_cashflow_local * fin_usd_rate) if free_cashflow_local is not None else None
