@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: meridian
+    runtime: python
+    # Build from project root so we can access both package.json and backend/
+    rootDir: .
+    buildCommand: >
+      npm install &&
+      VITE_API_BASE='' npm run build &&
+      pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn app:app --workers 2 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: VITE_API_BASE
+        value: ""           # Empty = same-origin (frontend + backend on same URL)
+      - key: FINNHUB_TOKEN
+        sync: false         # Optional: set in Render dashboard for company logos
+    autoDeploy: true

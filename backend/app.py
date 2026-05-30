@@ -1,12 +1,23 @@
 import os
 
 import yfinance as yf
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from compute_metrics import compute_metrics, history_to_list, sanitize_for_json
 
-app = Flask(__name__)
+# ── STATIC FRONTEND SERVING ───────────────────────────────────────────────────
+# In production (Render), Flask serves the Vite build from the dist/ folder
+# which lives one level above the backend/ directory.
+# In local dev, the Vite dev server (localhost:5173) handles the frontend.
+_DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "dist")
+_SERVE_FRONTEND = os.path.isdir(_DIST_DIR)
+
+app = Flask(
+    __name__,
+    static_folder=_DIST_DIR if _SERVE_FRONTEND else None,
+    static_url_path="",
+)
 
 _origins = [
     "http://localhost:5173",
@@ -16,7 +27,8 @@ _fe = os.environ.get("FRONTEND_URL")
 if _fe and _fe.strip() and _fe.strip() != "*":
     _origins.append(_fe.strip())
 
-CORS(app, origins=_origins)
+# Only apply CORS for the API routes — the frontend is same-origin in production
+CORS(app, origins=_origins, resources={r"/api/*": {"origins": _origins}})
 
 
 @app.route("/health")
@@ -129,6 +141,22 @@ def batch_quotes():
             results[t] = {"error": str(e)}
 
     return jsonify(results)
+
+
+# ── FRONTEND CATCH-ALL ─────────────────────────────────────────────────────────
+# Must be defined LAST so it doesn't shadow any API routes.
+# Serves the React SPA for any path that isn't an API route.
+# Only active when the dist/ build folder is present (production).
+if _SERVE_FRONTEND:
+    @app.route("/", defaults={"path": ""})
+    @app.route("/<path:path>")
+    def serve_frontend(path):
+        # Serve a real static file if it exists (JS chunks, CSS, images, etc.)
+        full = os.path.join(_DIST_DIR, path)
+        if path and os.path.isfile(full):
+            return send_from_directory(_DIST_DIR, path)
+        # Fall back to index.html so React Router handles the URL client-side
+        return send_from_directory(_DIST_DIR, "index.html")
 
 
 if __name__ == "__main__":

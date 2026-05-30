@@ -13,8 +13,47 @@ import urllib.request
 from urllib.parse import urlparse
 
 import pandas as pd
+import yfinance as yf
 
 _FINNHUB_LOGO_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
+
+# ── FX RATE CACHE ─────────────────────────────────────────────────────────────
+# Stores {currency_code: (fetch_timestamp, usd_rate)}
+# Rate = how many USD one unit of that currency buys (e.g. INR → 0.012)
+_FX_CACHE: Dict[str, Tuple[float, float]] = {}
+_FX_TTL = 900  # 15 minutes
+
+
+def _get_usd_rate(currency: str) -> float:
+    """
+    Return the exchange rate: 1 unit of `currency` = X USD.
+    Uses yfinance FX tickers like INRUSD=X, EURUSD=X, etc.
+    Falls back to 1.0 (treats as USD) if the rate cannot be fetched.
+    Results are cached for 15 minutes per currency.
+    """
+    if not currency or currency.upper() == "USD":
+        return 1.0
+    code = currency.upper().strip()
+    now = time.time()
+    cached = _FX_CACHE.get(code)
+    if cached and (now - cached[0]) < _FX_TTL:
+        return cached[1]
+    try:
+        ticker_sym = f"{code}USD=X"
+        info = yf.Ticker(ticker_sym).info
+        rate = (
+            info.get("regularMarketPrice")
+            or info.get("currentPrice")
+            or info.get("price")
+        )
+        if rate and isinstance(rate, (int, float)) and rate > 0:
+            _FX_CACHE[code] = (now, float(rate))
+            return float(rate)
+    except Exception:
+        pass
+    # If fetch fails, cache a sentinel 1.0 for a short period to avoid hammering
+    _FX_CACHE[code] = (now, 1.0)
+    return 1.0
 
 
 def _finnhub_logo(symbol: str) -> Optional[str]:
@@ -96,19 +135,21 @@ def safe_round(val, digits=2, fallback=None):
     return round(v, digits)
 
 
-def fmt_large(val):
-    """Format large numbers: 2689900000 → '$2689.9B'"""
+def fmt_large(val, currency="USD"):
+    """Format large numbers with the appropriate currency symbol."""
     v = safe(val)
     if v is None:
         return "N/A"
+    # Always format in USD (values have already been converted)
+    sym = "$"
     abs_v = abs(v)
     if abs_v >= 1e12:
-        return f"${v/1e12:.1f}T"
+        return f"{sym}{v/1e12:.1f}T"
     if abs_v >= 1e9:
-        return f"${v/1e9:.1f}B"
+        return f"{sym}{v/1e9:.1f}B"
     if abs_v >= 1e6:
-        return f"${v/1e6:.1f}M"
-    return f"${v:,.0f}"
+        return f"{sym}{v/1e6:.1f}M"
+    return f"{sym}{v:,.0f}"
 
 
 def compute_metrics(info: dict, history_df) -> dict:
@@ -116,60 +157,65 @@ def compute_metrics(info: dict, history_df) -> dict:
     Maps yfinance ticker.info fields + history DataFrame
     to every field the Meridian Analytics dashboard displays.
 
-    yfinance field reference (exact keys from ticker.info):
-      currentPrice, previousClose, open, dayHigh, dayLow
-      fiftyTwoWeekHigh, fiftyTwoWeekLow, volume, averageVolume
-      marketCap, sharesOutstanding
-      trailingPE, forwardPE                  → pe
-      priceToBook                            → pb
-      dividendYield                          → divYield
-      trailingEps, forwardEps               → eps
-      beta                                   → beta
-      totalRevenue                           → revenue (raw)
-      ebitda                                 → ebitda (raw)
-      ebitdaMargins                          → ebitdaPct (direct %)
-      returnOnEquity                         → roe (decimal, ×100 for %)
-      returnOnAssets                         → roa (decimal, ×100 for %)
-      debtToEquity                           → de
-      currentRatio                           → currentRatio (for liquidity score)
-      quickRatio                             → quickRatio
-      freeCashflow                           → fcfYield numerator
-      revenueGrowth                          → growth (decimal, ×100 for %)
-      earningsGrowth                         → earningsGrowth
-      shortName, longName                    → name
-      sector, industry                       → sector
-      country                                → country
-      website, longBusinessSummary           → website, description
-      logo_url (not in info — omit)
+    Currency handling:
+      - financialCurrency: the currency of income statement / balance sheet data
+        (totalRevenue, ebitda, netIncome, freeCashflow, marketCap)
+      - currency: the trading currency of the share price
+      All large monetary values are converted to USD using live FX rates
+      before being returned. The original currency code is also returned
+      so the frontend can display the correct symbol for the share price.
     """
 
-    # ── RAW VALUES ────────────────────────────────────────────────────────────
+    # ── CURRENCY DETECTION ────────────────────────────────────────────────────
+    # financialCurrency covers P&L / balance sheet items
+    financial_currency = (
+        info.get("financialCurrency")
+        or info.get("currency")
+        or "USD"
+    ).upper().strip()
+
+    # price_currency covers the share price
+    price_currency = (info.get("currency") or "USD").upper().strip()
+
+    # Exchange rates to USD
+    fin_usd_rate = _get_usd_rate(financial_currency)   # for marketCap, revenue, etc.
+    price_usd_rate = _get_usd_rate(price_currency)     # for share price (informational)
+
+    # ── RAW VALUES (in local currency) ────────────────────────────────────────
     price = safe(info.get("currentPrice") or info.get("regularMarketPrice"))
     prev_close = safe(info.get("previousClose") or info.get("regularMarketPreviousClose"))
-    mkt_cap = safe(info.get("marketCap"))
+    mkt_cap_local = safe(info.get("marketCap"))
     shares_out = safe(info.get("sharesOutstanding"))
-    total_revenue = safe(info.get("totalRevenue"))
-    ebitda = safe(info.get("ebitda"))
-    ebitda_margins = safe(info.get("ebitdaMargins"))  # e.g. 0.329 = 32.9%
-    roe = safe(info.get("returnOnEquity"))  # e.g. 1.479 = 147.9%
-    roa = safe(info.get("returnOnAssets"))  # e.g. 0.195 = 19.5%
-    de = safe(info.get("debtToEquity"))  # e.g. 195.87
+    total_revenue_local = safe(info.get("totalRevenue"))
+    ebitda_local = safe(info.get("ebitda"))
+    ebitda_margins = safe(info.get("ebitdaMargins"))  # e.g. 0.329 = 32.9%  (ratio, no conversion needed)
+    roe = safe(info.get("returnOnEquity"))             # ratio, no conversion needed
+    roa = safe(info.get("returnOnAssets"))             # ratio, no conversion needed
+    de = safe(info.get("debtToEquity"))                # ratio, no conversion needed
     beta_raw = safe(info.get("beta"))
     current_ratio = safe(info.get("currentRatio"))
     quick_ratio = safe(info.get("quickRatio"))
-    free_cashflow = safe(info.get("freeCashflow"))
-    revenue_growth = safe(info.get("revenueGrowth"))  # e.g. -0.055 = -5.5%
+    free_cashflow_local = safe(info.get("freeCashflow"))
+    revenue_growth = safe(info.get("revenueGrowth"))  # ratio, no conversion needed
     trailing_pe = safe(info.get("trailingPE"))
     forward_pe = safe(info.get("forwardPE"))
     price_to_book = safe(info.get("priceToBook"))
-    div_yield_raw = safe(info.get("dividendYield"))  # e.g. 0.0053 = 0.53%
-    trailing_eps = safe(info.get("trailingEps"))
-    profit_margins = safe(info.get("profitMargins"))
-    net_income_common = safe(info.get("netIncomeToCommon"))
-    payout_ratio = safe(info.get("payoutRatio"))
-    dividend_rate = safe(info.get("dividendRate"))
+    div_yield_raw = safe(info.get("dividendYield"))   # ratio, no conversion needed
+    trailing_eps = safe(info.get("trailingEps"))      # in price_currency (local)
+    profit_margins = safe(info.get("profitMargins"))  # ratio, no conversion needed
+    net_income_common_local = safe(info.get("netIncomeToCommon"))
+    payout_ratio = safe(info.get("payoutRatio"))      # ratio
+    dividend_rate = safe(info.get("dividendRate"))    # in price_currency (local per share)
     five_y_div = safe(info.get("fiveYearAvgDividendYield"))
     ex_div_raw = info.get("exDividendDate")
+
+    # ── USD CONVERSION ────────────────────────────────────────────────────────
+    # marketCap is shares * price, so it uses price_currency
+    mkt_cap = (mkt_cap_local * fin_usd_rate) if mkt_cap_local is not None else None
+    total_revenue = (total_revenue_local * fin_usd_rate) if total_revenue_local is not None else None
+    ebitda = (ebitda_local * fin_usd_rate) if ebitda_local is not None else None
+    free_cashflow = (free_cashflow_local * fin_usd_rate) if free_cashflow_local is not None else None
+    net_income_common = (net_income_common_local * fin_usd_rate) if net_income_common_local is not None else None
 
     # ── PRICE CHANGE ──────────────────────────────────────────────────────────
     change = safe_round((price - prev_close) if price and prev_close else None)
@@ -265,10 +311,18 @@ def compute_metrics(info: dict, history_df) -> dict:
         "website": info.get("website") or "",
         "finnhubLogo": _fin_logo,
         "logoUrl": _logo_url(info.get("website") or ""),
+        # ── Currency metadata ──────────────────────────────────────────────
+        # currency: 3-letter code for the share price (e.g. "INR", "JPY", "EUR")
+        # All raw monetary fields below are already converted to USD.
+        "currency": price_currency,
+        "financialCurrency": financial_currency,
+        "usdRate": safe_round(fin_usd_rate, 6),
+        # ── Dividend ───────────────────────────────────────────────────────
         "payoutRatioPct": payout_pct,
-        "dividendAnnual": safe_round(dividend_rate),
+        "dividendAnnual": safe_round(dividend_rate),   # in local price currency per share
         "divYield5YAvg": div_yield_5y,
         "exDividendDate": _fmt_ex_dividend(ex_div_raw),
+        # ── Price (in local price_currency) ───────────────────────────────
         "price": safe_round(price),
         "prevClose": safe_round(prev_close),
         "open": safe_round(safe(info.get("open") or info.get("regularMarketOpen"))),
@@ -280,8 +334,10 @@ def compute_metrics(info: dict, history_df) -> dict:
         "avgVolume": int(safe(info.get("averageVolume"), 0)),
         "change": change,
         "changePct": change_pct,
+        # ── Formatted strings (USD-converted) ─────────────────────────────
         "capital": fmt_large(mkt_cap),
         "revenue": fmt_large(total_revenue),
+        # ── Valuation ratios (dimensionless) ──────────────────────────────
         "pe": pe,
         "pb": pb,
         "divYield": div_yield,
@@ -296,17 +352,18 @@ def compute_metrics(info: dict, history_df) -> dict:
         "efficiency": efficiency,
         "growth": growth,
         "risk": risk_score,
+        # ── Raw values (ALL converted to USD) ─────────────────────────────
         "raw": {
-            "marketCap": safe_round(mkt_cap),
-            "totalRevenue": safe_round(total_revenue),
-            "ebitda": safe_round(ebitda),
-            "freeCashflow": safe_round(free_cashflow),
-            "eps": safe_round(trailing_eps),
+            "marketCap": safe_round(mkt_cap),           # USD
+            "totalRevenue": safe_round(total_revenue),   # USD
+            "ebitda": safe_round(ebitda),                # USD
+            "freeCashflow": safe_round(free_cashflow),   # USD
+            "netIncome": safe_round(net_income_common),  # USD
+            "eps": safe_round(trailing_eps),             # local price currency (per share)
             "sharesOut": safe_round(shares_out),
             "currentRatio": safe_round(current_ratio),
             "quickRatio": safe_round(quick_ratio),
             "profitMargins": safe_round(profit_margins),
-            "netIncome": safe_round(net_income_common),
         },
     }
 

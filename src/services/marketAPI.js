@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
+const BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:5000').trim();
 
 /**
  * Fetch full company metrics + chart data for one ticker.
@@ -72,6 +72,11 @@ function createStubRow(id, symbol, country) {
     name: symbol,
     sector: 'Unknown',
     country,
+    // Currency: defaults to USD until the API enriches the row.
+    // currency = ISO 4217 code for the share price (e.g. 'INR', 'JPY', 'EUR').
+    // capitalGravity / revenueFlow / netYield are always stored in USD billions.
+    currency: 'USD',
+    financialCurrency: 'USD',
     website: null,
     logoUrl: null,
     finnhubLogo: null,
@@ -115,14 +120,18 @@ export function mergeApiMetricsToCompany(row, metrics) {
     return { ...row, loadError: metrics?.error || null };
   }
   const r = metrics.raw || {};
-  const mcap = r.marketCap;
-  const rev = r.totalRevenue;
+  // All raw monetary values from backend are already converted to USD.
+  const mcap = r.marketCap;       // USD
+  const rev  = r.totalRevenue;    // USD
   let netB = null;
   if (r.netIncome != null && r.netIncome > 0) netB = r.netIncome / 1e9;
-  else if (r.eps != null && r.sharesOut != null) netB = (r.eps * r.sharesOut) / 1e9;
-  const capB = mcap != null ? mcap / 1e9 : 0;
-  const revB = rev != null ? rev / 1e9 : 0;
-  const valIx = rev && mcap ? mcap / rev : 0;
+  else if (r.eps != null && r.sharesOut != null) {
+    // EPS is in local currency; we skip this fallback to avoid mixing currencies.
+    netB = null;
+  }
+  const capB = mcap != null ? mcap / 1e9 : 0;   // USD billions
+  const revB = rev  != null ? rev  / 1e9 : 0;   // USD billions
+  const valIx = rev && mcap ? mcap / rev : 0;   // dimensionless ratio
 
   return {
     ...row,
@@ -130,6 +139,11 @@ export function mergeApiMetricsToCompany(row, metrics) {
     name: metrics.name || row.name,
     sector: metrics.sector || row.sector,
     country: metrics.country || row.country,
+    // Currency codes — essential for correct symbol display in the UI.
+    // sharePrice is in the local exchange currency (e.g. INR for Indian stocks).
+    // capitalGravity / revenueFlow / netYield are always in USD billions.
+    currency: metrics.currency || row.currency || 'USD',
+    financialCurrency: metrics.financialCurrency || row.financialCurrency || 'USD',
     website: metrics.website || row.website || null,
     logoUrl: metrics.logoUrl || row.logoUrl || null,
     finnhubLogo: metrics.finnhubLogo ?? row.finnhubLogo ?? null,
@@ -157,7 +171,7 @@ export function mergeApiMetricsToCompany(row, metrics) {
     payoutRatioPct: metrics.payoutRatioPct ?? row.payoutRatioPct ?? null,
     divYield5YAvg: metrics.divYield5YAvg ?? row.divYield5YAvg ?? null,
     exDividendDate: metrics.exDividendDate ?? row.exDividendDate ?? null,
-    /** Trailing annual dividend per share (USD), when reported by Yahoo */
+    /** Trailing annual dividend per share in local price currency */
     dividendRate: metrics.dividendAnnual ?? row.dividendRate ?? null,
   };
 }

@@ -8,7 +8,7 @@ import {
   stubsFromGlobalMap,
   mergeApiMetricsToCompany,
 } from "./services/marketAPI";
-import { fmtNum } from "./utils/formatMetric";
+import { fmtNum, getCurrencySymbol, fmtLocalPrice, fmtUsdBn } from "./utils/formatMetric";
 import StockLab from "./components/StockLab";
 import { CompanyLogo } from "./components/CompanyLogo";
 import { CountryFlag } from "./components/CountryFlag";
@@ -417,6 +417,185 @@ function CorrMatrix() {
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ─── LOADING SCREEN ─────────────────────────────────────────────────────────
+const LOAD_MESSAGES = [
+  "Connecting to global markets…",
+  "Fetching live equity data…",
+  "Computing financial metrics…",
+  "Aggregating sector intelligence…",
+  "Calibrating risk coefficients…",
+  "Syncing price histories…",
+  "Building market overview…",
+  "Almost ready…",
+];
+
+function MeridianLoadingScreen() {
+  const [progress, setProgress] = useState(0);
+  const [msgIdx, setMsgIdx] = useState(0);
+
+  useEffect(() => {
+    // Simulate progress — accelerates then slows near 90%
+    const ticks = [
+      { delay: 200, add: 8 }, { delay: 400, add: 10 }, { delay: 600, add: 9 },
+      { delay: 800, add: 8 }, { delay: 1200, add: 7 }, { delay: 1800, add: 6 },
+      { delay: 2500, add: 5 }, { delay: 3500, add: 4 }, { delay: 5000, add: 3 },
+      { delay: 7000, add: 2 }, { delay: 10000, add: 1 },
+    ];
+    const timers = [];
+    let total = 0;
+    for (const { delay, add } of ticks) {
+      total += add;
+      const capped = Math.min(total, 90);
+      timers.push(setTimeout(() => setProgress(capped), delay));
+    }
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => setMsgIdx(i => (i + 1) % LOAD_MESSAGES.length), 2200);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <>
+      <style>{`
+        @keyframes meridian-spin-outer {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes meridian-spin-inner {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(-360deg); }
+        }
+        @keyframes meridian-pulse-glow {
+          0%, 100% { box-shadow: 0 0 32px rgba(232,184,75,0.35), 0 0 80px rgba(232,184,75,0.12); }
+          50% { box-shadow: 0 0 48px rgba(232,184,75,0.55), 0 0 120px rgba(232,184,75,0.22); }
+        }
+        @keyframes meridian-shimmer {
+          0% { background-position: -400px 0; }
+          100% { background-position: 400px 0; }
+        }
+        @keyframes meridian-fade-msg {
+          0% { opacity: 0; transform: translateY(6px); }
+          15%, 85% { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(-6px); }
+        }
+        @keyframes meridian-dot-bounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+          40% { transform: translateY(-8px); opacity: 1; }
+        }
+      `}</style>
+      <ParticleCanvas />
+      <div style={{
+        position: "fixed", inset: 0, display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center", zIndex: 10,
+        background: "radial-gradient(ellipse at 50% 40%, rgba(232,184,75,0.05) 0%, transparent 65%), #080c14",
+        fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
+      }}>
+        {/* Orbital rings */}
+        <div style={{ position: "relative", width: 160, height: 160, marginBottom: 48 }}>
+          {/* Outer ring */}
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: "50%",
+            border: "2px solid transparent",
+            borderTopColor: "rgba(232,184,75,0.8)",
+            borderRightColor: "rgba(232,184,75,0.2)",
+            animation: "meridian-spin-outer 1.8s linear infinite",
+          }} />
+          {/* Middle ring */}
+          <div style={{
+            position: "absolute", inset: 16, borderRadius: "50%",
+            border: "1.5px solid transparent",
+            borderTopColor: "rgba(52,211,153,0.7)",
+            borderLeftColor: "rgba(52,211,153,0.2)",
+            animation: "meridian-spin-inner 2.4s linear infinite",
+          }} />
+          {/* Inner ring */}
+          <div style={{
+            position: "absolute", inset: 32, borderRadius: "50%",
+            border: "1px solid transparent",
+            borderTopColor: "rgba(56,189,248,0.6)",
+            borderRightColor: "rgba(56,189,248,0.15)",
+            animation: "meridian-spin-outer 3.2s linear infinite",
+          }} />
+          {/* Logo center */}
+          <div style={{
+            position: "absolute", inset: 44,
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #e8b84b 0%, #d4973a 100%)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            animation: "meridian-pulse-glow 2.5s ease-in-out infinite",
+          }}>
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+              <path d="M6 30 L18 8 L30 30" stroke="#080c14" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M10 22 L18 8 L26 22" stroke="#080c14" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.5" />
+            </svg>
+          </div>
+        </div>
+
+        {/* Brand name */}
+        <div style={{
+          fontSize: 28, fontWeight: 800, letterSpacing: ".18em", textTransform: "uppercase",
+          color: "#f1f5f9", marginBottom: 8,
+          textShadow: "0 0 40px rgba(232,184,75,0.25)",
+        }}>
+          MERIDIAN
+        </div>
+        <div style={{ fontSize: 12, color: "rgba(148,163,184,0.6)", letterSpacing: ".3em", textTransform: "uppercase", marginBottom: 48 }}>
+          Global Market Intelligence
+        </div>
+
+        {/* Status message */}
+        <div style={{ height: 24, marginBottom: 32, overflow: "hidden", position: "relative", width: 320, textAlign: "center" }}>
+          <div key={msgIdx} style={{
+            fontSize: 14, color: P.slateD, animation: "meridian-fade-msg 2.2s ease forwards",
+            position: "absolute", width: "100%", left: 0,
+          }}>
+            {LOAD_MESSAGES[msgIdx]}
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ width: 320, marginBottom: 20 }}>
+          <div style={{
+            width: "100%", height: 3, borderRadius: 999,
+            background: "rgba(255,255,255,0.07)", overflow: "hidden",
+          }}>
+            <div style={{
+              height: "100%", borderRadius: 999,
+              width: `${progress}%`,
+              transition: "width 0.8s cubic-bezier(0.25, 1, 0.5, 1)",
+              background: "linear-gradient(90deg, #e8b84b, #34d399, #38bdf8, #e8b84b)",
+              backgroundSize: "400px 100%",
+              animation: "meridian-shimmer 2s linear infinite",
+              boxShadow: "0 0 12px rgba(232,184,75,0.5)",
+            }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+            <span style={{ fontSize: 11, color: "rgba(148,163,184,0.4)", fontFamily: "'DM Mono', monospace" }}>
+              Initialising
+            </span>
+            <span style={{ fontSize: 11, color: "rgba(232,184,75,0.7)", fontFamily: "'DM Mono', monospace" }}>
+              {Math.round(progress)}%
+            </span>
+          </div>
+        </div>
+
+        {/* Dot indicators */}
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          {[0, 1, 2].map(i => (
+            <div key={i} style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: P.gold,
+              animation: `meridian-dot-bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
+            }} />
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -985,56 +1164,70 @@ export default function App({ user, onLogout }) {
   const tickerItems = useMemo(() => sortedFiltered.slice(0, 30), [sortedFiltered]);
 
   if (!data.length && dataLoading) {
-    return (
-      <>
-        <ParticleCanvas />
-        <div className="page-shell" style={{ position: "relative", zIndex: 1, minHeight: "100vh", padding: "2rem 1rem" }}>
-          <div style={{ maxWidth: 1280, margin: "0 auto" }}>
-            <div style={{ color: P.slateD, marginBottom: 16, fontSize: 14 }}>
-              Loading market data… This can take up to a minute while Yahoo Finance metrics load.
-            </div>
-            <div style={{ color: P.slateD, marginBottom: 20, fontSize: 12, opacity: 0.85 }}>
-              If this never finishes, start the API from the project folder:{" "}
-              <code style={{ color: P.gold }}>cd backend &amp;&amp; python app.py</code> (port 5000), then reload.
-            </div>
-            {[1, 2, 3, 4, 5, 6].map((k) => (
-              <div
-                key={k}
-                style={{
-                  background: "var(--skeleton-bg, #1e2030)",
-                  borderRadius: 8,
-                  height: 80,
-                  marginBottom: 12,
-                  animation: "pulse 1.5s ease-in-out infinite",
-                }}
-              />
-            ))}
-          </div>
-        </div>
-      </>
-    );
+    return <MeridianLoadingScreen />;
   }
 
   if (!data.length && dataError) {
     return (
       <>
         <ParticleCanvas />
-        <div className="page-shell" style={{ position: "relative", zIndex: 1, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
-          <div style={{ color: "#ef4444", fontSize: 13, textAlign: "center", maxWidth: 400 }}>
-            {dataError}
-            <div style={{ marginTop: 12 }}>
-              <button
-                type="button"
-                className="nav-tab on"
-                style={{ minHeight: 44, cursor: "pointer" }}
-                onClick={() => {
-                  setDataError(null);
-                  setReloadTick((t) => t + 1);
-                }}
-              >
-                Retry
-              </button>
+        <div style={{
+          position: "fixed", inset: 0, display: "flex", alignItems: "center",
+          justifyContent: "center", zIndex: 10, background: "#080c14"
+        }}>
+          <div style={{
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(232,184,75,0.25)",
+            borderRadius: 24,
+            padding: "48px 56px",
+            maxWidth: 440,
+            width: "90%",
+            textAlign: "center",
+            backdropFilter: "blur(24px)",
+            boxShadow: "0 32px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)"
+          }}>
+            <div style={{
+              width: 72, height: 72, borderRadius: "50%",
+              background: "rgba(239,68,68,0.12)",
+              border: "2px solid rgba(239,68,68,0.4)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              margin: "0 auto 24px", fontSize: 32
+            }}>⚠</div>
+            <div style={{ color: "#f87171", fontSize: 18, fontWeight: 700, marginBottom: 10, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+              Connection Failed
             </div>
+            <div style={{ color: P.slateD, fontSize: 13, lineHeight: 1.7, marginBottom: 28, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+              Unable to reach the market data API. Make sure the backend server is running on port 5000.
+            </div>
+            <div style={{ color: "rgba(148,163,184,0.55)", fontSize: 11, fontFamily: "'DM Mono', monospace", background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "10px 14px", marginBottom: 28, textAlign: "left", lineHeight: 1.8 }}>
+              <span style={{ color: P.gold }}>$</span> cd backend<br />
+              <span style={{ color: P.gold }}>$</span> python app.py
+            </div>
+            <button
+              type="button"
+              style={{
+                background: "linear-gradient(135deg, #e8b84b, #d4973a)",
+                color: "#080c14",
+                border: "none",
+                borderRadius: 12,
+                padding: "14px 36px",
+                fontSize: 14,
+                fontWeight: 700,
+                fontFamily: "'Plus Jakarta Sans', sans-serif",
+                cursor: "pointer",
+                letterSpacing: ".06em",
+                transition: "opacity .2s, transform .2s",
+                boxShadow: "0 8px 24px rgba(232,184,75,0.35)"
+              }}
+              onMouseEnter={e => { e.currentTarget.style.opacity = "0.88"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.transform = "translateY(0)"; }}
+              onClick={() => {
+                setDataError(null);
+                setReloadTick((t) => t + 1);
+              }}
+            >
+              Retry Connection
+            </button>
           </div>
         </div>
       </>
@@ -1073,7 +1266,8 @@ export default function App({ user, onLogout }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 24 }}>
                 {[
-                  { l: "Capital", v: (modalCompany.capitalGravity == null || Number.isNaN(modalCompany.capitalGravity)) ? "N/A" : `$${modalCompany.capitalGravity.toFixed(1)}B`, c: P.gold }, { l: "Revenue", v: (modalCompany.revenueFlow == null || Number.isNaN(modalCompany.revenueFlow)) ? "N/A" : `$${modalCompany.revenueFlow.toFixed(1)}B`, c: P.sky },
+                  { l: "Capital", v: (modalCompany.capitalGravity == null || Number.isNaN(modalCompany.capitalGravity)) ? "N/A" : fmtUsdBn(modalCompany.capitalGravity), c: P.gold }, { l: "Revenue", v: (modalCompany.revenueFlow == null || Number.isNaN(modalCompany.revenueFlow)) ? "N/A" : fmtUsdBn(modalCompany.revenueFlow), c: P.sky },
+                  { l: "Price", v: fmtLocalPrice(modalCompany.sharePrice, modalCompany.currency), c: P.amber },
                   { l: "P/E", v: `${fmtNum(modalCompany.peRatio, 1, "x")}`, c: P.amber }, { l: "P/B", v: `${fmtNum(modalCompany.pbRatio, 2, "x")}`, c: P.sky },
                   { l: "D/E", v: fmtNum(modalCompany.debtEquity, 2), c: (modalCompany.debtEquity ?? 0) > 2 ? P.rose : P.slate }, { l: "ROE", v: `${fmtNum(modalCompany.roe, 1, "%")}`, c: (modalCompany.roe ?? 0) > 15 ? P.emerald : P.slate },
                   { l: "ROA", v: `${fmtNum(modalCompany.roa, 1, "%")}`, c: P.sky }, { l: "Beta", v: fmtNum(modalCompany.beta, 2), c: (modalCompany.beta ?? 0) > 1.5 ? P.rose : P.emerald },
@@ -1127,7 +1321,7 @@ export default function App({ user, onLogout }) {
               <CompanyLogo company={c} size={18} radius={6} />
               <span className="name">{c.name}</span>
               <CountryFlag country={c.country} size={14} title={c.country} />
-              <span style={{ fontFamily: "DM Mono", color: P.gold }}>{fmtNum(c.sharePrice, 2, '', '$')}</span>
+              <span style={{ fontFamily: "DM Mono", color: P.gold }}>{fmtLocalPrice(c.sharePrice, c.currency)}</span>
               <span className={(c.growthMomentum ?? 0) > 0 ? "up" : "dn"}>{(c.growthMomentum ?? 0) > 0 ? "+" : ""}{fmtNum(c.growthMomentum, 1, '%')}</span>
             </span>
           ))}
@@ -1178,9 +1372,9 @@ export default function App({ user, onLogout }) {
                             <span>{c.country}</span>
                             <span style={{ fontFamily: "DM Mono, monospace" }}>{c.symbol}</span>
                           </div>
-                          <div style={{ fontSize: 10, color: P.slateD, marginTop: 4 }}>{c.sector} · ${c.capitalGravity.toFixed(1)}B mcap</div>
+                          <div style={{ fontSize: 10, color: P.slateD, marginTop: 4 }}>{c.sector} · {fmtUsdBn(c.capitalGravity)} mcap (USD)</div>
                         </div>
-                        <span style={{ fontFamily: "DM Mono", color: P.gold, fontSize: 12 }}>{fmtNum(c.sharePrice, 2, "", "$")}</span>
+                        <span style={{ fontFamily: "DM Mono", color: P.gold, fontSize: 12 }}>{fmtLocalPrice(c.sharePrice, c.currency)}</span>
                       </div>
                     ))}
                   </div>
@@ -1221,15 +1415,15 @@ export default function App({ user, onLogout }) {
               {/* KPIs */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(185px,1fr))", gap: 14 }}>
                 {[
-                  { label: "Capital Gravity", value: `$${(totalCap / 1000).toFixed(1)}T`, delta: "+4.2%", up: true, spark: sp1, color: P.gold },
-                  { label: "Revenue Flow", value: `$${(totalRev / 1000).toFixed(1)}T`, delta: "+1.9%", up: true, spark: sp2, color: P.sky },
-                  { label: "Valuation Index", value: `${avgVal.toFixed(1)}x`, delta: "-0.3%", up: false, spark: sp3, color: P.violet },
-                  { label: "Growth Engines", value: posGrowth, delta: `of ${filtered.length}`, up: true, spark: null, color: P.emerald },
-                  { label: "Economies Covered", value: COUNTRIES.length, delta: "Nations", up: null, spark: null, color: P.amber },
-                  { label: "Sector Segments", value: SECTORS.length, delta: "Segments", up: null, spark: null, color: P.rose },
+                  { label: "Capital Gravity", value: fmtUsdBn(totalCap / 1000), delta: "+4.2%", up: true, spark: sp1, color: P.gold, note: "USD" },
+                  { label: "Revenue Flow",    value: fmtUsdBn(totalRev / 1000), delta: "+1.9%", up: true, spark: sp2, color: P.sky,  note: "USD" },
+                  { label: "Valuation Index", value: `${avgVal.toFixed(1)}x`,   delta: "-0.3%", up: false, spark: sp3, color: P.violet, note: null },
+                  { label: "Growth Engines",  value: posGrowth,                 delta: `of ${filtered.length}`, up: true, spark: null, color: P.emerald, note: null },
+                  { label: "Economies Covered", value: COUNTRIES.length, delta: "Nations",  up: null, spark: null, color: P.amber, note: null },
+                  { label: "Sector Segments",   value: SECTORS.length,  delta: "Segments", up: null, spark: null, color: P.rose, note: null },
                 ].map((k, i) => (
                   <div key={i} className="card-lux fu" style={{ animationDelay: `${i * .05}s` }}>
-                    <div className="kl">{k.label}</div>
+                    <div className="kl">{k.label}{k.note && <span style={{ fontSize: 9, color: P.slateD, marginLeft: 6, letterSpacing: '.06em' }}>{k.note}</span>}</div>
                     <div className="kv" style={{ color: k.color, fontSize: 24 }}>{k.value}</div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
                       <span className={`kd ${k.up === true ? "up" : k.up === false ? "dn" : "nt"}`}>{k.up === true ? "▲ " : k.up === false ? "▼ " : ""}{k.delta}</span>
@@ -1351,8 +1545,8 @@ export default function App({ user, onLogout }) {
                             </div>
                           </td>
                           <td style={{ padding: "8px 10px" }}><span className="badge" style={{ background: SECTOR_COLORS[c.sector] + "18", color: SECTOR_COLORS[c.sector] }}>{c.sector}</span></td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: P.gold, fontSize: 13 }}>{c.capitalGravity.toFixed(1)}B</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: P.sky, fontSize: 13 }}>{c.revenueFlow.toFixed(1)}B</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: P.gold, fontSize: 13 }}>$ {c.capitalGravity.toFixed(1)}B</td>
+                          <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: P.sky,  fontSize: 13 }}>$ {c.revenueFlow.toFixed(1)}B</td>
                           <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.peRatio > 40 ? P.rose : P.amber, fontSize: 13 }}>{c.peRatio.toFixed(1)}x</td>
                           <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.beta > 1.5 ? P.rose : c.beta < 0.8 ? P.emerald : P.slate, fontSize: 13 }}>{c.beta.toFixed(2)}</td>
                           <td style={{ padding: "8px 10px", fontFamily: "DM Mono", color: c.growthMomentum > 0 ? P.emerald : P.rose, fontSize: 13 }}>{c.growthMomentum > 0 ? "+" : ""}{c.growthMomentum.toFixed(1)}%</td>
@@ -1389,7 +1583,7 @@ export default function App({ user, onLogout }) {
                         </div>
                         <div style={{ fontSize: 11, color: P.slateD, marginBottom: 6 }}>{c.sector}</div>
                         <div style={{ display: "flex", gap: 12, fontSize: 12, fontFamily: "DM Mono" }}>
-                          <span style={{ color: P.gold }}>{c.capitalGravity.toFixed(1)}B</span>
+                          <span style={{ color: P.gold }}>${c.capitalGravity.toFixed(1)}B</span>
                           <span style={{ color: c.growthMomentum > 0 ? P.emerald : P.rose }}>{c.growthMomentum > 0 ? "+" : ""}{c.growthMomentum.toFixed(1)}%</span>
                           <span style={{ color: P.amber }}>PE {c.peRatio.toFixed(1)}</span>
                           <span style={{ color: P.sky }}>β {c.beta.toFixed(2)}</span>
@@ -1471,14 +1665,14 @@ export default function App({ user, onLogout }) {
                   {/* Company KPIs */}
                   <div className="metric-card-grid" style={{ gap: 14 }}>
                     {[
-                      { label: "Capital Gravity", val: (selectedCompany.capitalGravity == null || Number.isNaN(selectedCompany.capitalGravity)) ? "N/A" : `$${selectedCompany.capitalGravity.toFixed(1)}B`, color: P.gold },
-                      { label: "Revenue Flow", val: (selectedCompany.revenueFlow == null || Number.isNaN(selectedCompany.revenueFlow)) ? "N/A" : `$${selectedCompany.revenueFlow.toFixed(1)}B`, color: P.sky },
-                      { label: "Net Yield", val: (selectedCompany.netYield == null || Number.isNaN(selectedCompany.netYield)) ? "N/A" : `$${selectedCompany.netYield.toFixed(1)}B`, color: P.emerald },
+                      { label: "Capital Gravity",  val: (selectedCompany.capitalGravity == null || Number.isNaN(selectedCompany.capitalGravity)) ? "N/A" : fmtUsdBn(selectedCompany.capitalGravity), color: P.gold },
+                      { label: "Revenue Flow",     val: (selectedCompany.revenueFlow   == null || Number.isNaN(selectedCompany.revenueFlow))   ? "N/A" : fmtUsdBn(selectedCompany.revenueFlow),   color: P.sky  },
+                      { label: "Net Yield",        val: (selectedCompany.netYield      == null || Number.isNaN(selectedCompany.netYield))      ? "N/A" : fmtUsdBn(selectedCompany.netYield),      color: P.emerald },
                       { label: "Valuation Index", val: fmtNum(selectedCompany.valuationIndex, 1, "x"), color: P.violet },
                       { label: "Share Price", val: (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                           <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: selectedCompany.priceHistory?.length ? "#22c55e" : "#6b7280", animation: selectedCompany.priceHistory?.length ? "pulse 2s infinite" : "none", flexShrink: 0 }} />
-                          {fmtNum(selectedCompany.sharePrice, 2, '', '$')}
+                          {fmtLocalPrice(selectedCompany.sharePrice, selectedCompany.currency)}
                         </span>
                       ), color: P.amber },
                       { label: "Growth Momentum", val: `${(selectedCompany.growthMomentum ?? 0) > 0 ? "+" : ""}${fmtNum(selectedCompany.growthMomentum, 1, "%")}`, color: (selectedCompany.growthMomentum ?? 0) > 0 ? P.emerald : P.rose },
@@ -1517,9 +1711,9 @@ export default function App({ user, onLogout }) {
                   {/* Country KPIs */}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(175px,1fr))", gap: 14 }}>
                     {[
-                      { label: "Capital Gravity", val: `$${(countryDetail.capitalGravity / 1000).toFixed(2)}T`, color: P.gold },
-                      { label: "Revenue Flow", val: `$${countryDetail.revenueFlow.toFixed(0)}B`, color: P.sky },
-                      { label: "Net Yield", val: `$${countryDetail.netYield.toFixed(0)}B`, color: P.emerald },
+                      { label: "Capital Gravity",  val: `${fmtUsdBn(countryDetail.capitalGravity / 1000)}`, color: P.gold },
+                      { label: "Revenue Flow",     val: fmtUsdBn(countryDetail.revenueFlow),              color: P.sky  },
+                      { label: "Net Yield",        val: fmtUsdBn(countryDetail.netYield),                 color: P.emerald },
                       { label: "Valuation Index", val: `${countryDetail.avgValuation.toFixed(1)}x`, color: P.violet },
                       { label: "Entities Tracked", val: countryDetail.count, color: P.slate },
                     ].map((k, i) => (
@@ -1574,7 +1768,7 @@ export default function App({ user, onLogout }) {
                                 </div>
                               </td>
                               <td style={{ padding: "9px 10px" }}><span className="badge" style={{ background: SECTOR_COLORS[c.sector] + "15", color: SECTOR_COLORS[c.sector] }}>{c.sector}</span></td>
-                              <td style={{ padding: "9px 10px", fontFamily: "DM Mono", color: P.gold, fontSize: 11 }}>{c.capitalGravity.toFixed(1)}B</td>
+                              <td style={{ padding: "9px 10px", fontFamily: "DM Mono", color: P.gold, fontSize: 11 }}>${c.capitalGravity.toFixed(1)}B</td>
                               <td style={{ padding: "9px 10px", fontFamily: "DM Mono", color: c.growthMomentum > 0 ? P.emerald : P.rose, fontSize: 11 }}>{c.growthMomentum > 0 ? "+" : ""}{c.growthMomentum.toFixed(1)}%</td>
                               <td style={{ padding: "9px 10px", minWidth: 80 }}><div className="prog"><div className="pfill" style={{ width: `${c.liquidityScore}%`, background: `linear-gradient(90deg,${P.sky}66,${P.sky})` }} /></div></td>
                             </tr>
