@@ -1,4 +1,4 @@
-const BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:5000').trim();
+const BASE = (import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? 'http://localhost:5000' : '')).trim();
 
 /**
  * Fetch full company metrics + chart data for one ticker.
