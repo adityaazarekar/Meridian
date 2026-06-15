@@ -1,20 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import App from './App.jsx';
-import Login from './Login.jsx';
+
+// Login removed — app loads directly into the dashboard.
+const GUEST_USER = { name: 'Guest', email: '' };
 
 export default function AuthWrapper() {
-  const [user, setUser] = useState(null);
-
-  if (!user) {
-    return <Login onLogin={setUser} />;
-  }
-
-  return (
-    <App
-      user={user}
-      onLogout={() => {
-        setUser(null);
-      }}
-    />
-  );
+  return <App user={GUEST_USER} onLogout={() => {}} />;
 }
