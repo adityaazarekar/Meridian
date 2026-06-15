@@ -599,14 +599,6 @@ function MeridianLoadingScreen() {
         </div>
       </div>
 
-      {/* Live-pick loading overlay — shown while fetching company metrics */}
-      {livePickLoading && (
-        <div className="live-pick-overlay">
-          <div style={{ width: 48, height: 48, borderRadius: "50%", border: "3px solid rgba(232,184,75,0.2)", borderTopColor: "#e8b84b", animation: "spin 0.8s linear infinite" }} />
-          <div style={{ color: "#f1f5f9", fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 15, fontWeight: 600 }}>Loading company data…</div>
-          <div style={{ color: "#475569", fontSize: 12 }}>Fetching live metrics from Yahoo Finance</div>
-        </div>
-      )}
     </>
   );
 }
