@@ -68,6 +68,83 @@ def get_stock(ticker):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/live-search")
+def live_search():
+    """
+    Live company search via Yahoo Finance.
+    Query param: q (company name or ticker symbol)
+    Returns up to 10 matching equities/ETFs with basic metadata.
+    """
+    q = (request.args.get("q") or "").strip()
+    if not q or len(q) < 1:
+        return jsonify([])
+
+    try:
+        search = yf.Search(q, max_results=15, news_count=0)
+        quotes = search.quotes or []
+
+        results = []
+        for item in quotes:
+            # Filter to tradeable securities only (skip futures, currencies, etc.)
+            q_type = (item.get("quoteType") or "").upper()
+            if q_type not in ("EQUITY", "ETF", "MUTUALFUND", ""):
+                continue
+
+            symbol = item.get("symbol") or ""
+            name = (
+                item.get("longname")
+                or item.get("shortname")
+                or item.get("longName")
+                or item.get("shortName")
+                or symbol
+            )
+            exchange = item.get("exchange") or item.get("exchDisp") or ""
+            sector = item.get("sector") or item.get("sectorDisp") or ""
+            industry = item.get("industry") or item.get("industryDisp") or ""
+            score = item.get("score") or 0
+
+            results.append({
+                "symbol": symbol,
+                "name": name,
+                "exchange": exchange,
+                "type": q_type,
+                "sector": sector,
+                "industry": industry,
+                "score": score,
+            })
+
+            if len(results) >= 10:
+                break
+
+        return jsonify(results)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/stock-metrics/<ticker>")
+def get_stock_metrics(ticker):
+    """
+    Returns company metrics (no chart) for a single ticker.
+    Used after picking a company from live search results.
+    """
+    try:
+        stock = yf.Ticker(ticker.upper())
+        info = stock.info or {}
+
+        if not info.get("regularMarketPrice") and not info.get("currentPrice"):
+            if len(info) < 3:
+                return jsonify({"error": f"Ticker '{ticker}' not found"}), 404
+
+        history = stock.history(period="3mo", interval="1d")
+        metrics = sanitize_for_json(compute_metrics(info, history))
+        chart = history_to_list(history)
+        return jsonify({"metrics": metrics, "chart": chart})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/search")
 def search_stocks():
     GLOBAL_TICKERS = {
@@ -82,6 +159,16 @@ def search_stocks():
             "JPM",
             "V",
             "WMT",
+            "CL",
+            "JNJ",
+            "PG",
+            "KO",
+            "PEP",
+            "MCD",
+            "DIS",
+            "NFLX",
+            "INTC",
+            "AMD",
         ],
         "India": [
             "RELIANCE.NS",

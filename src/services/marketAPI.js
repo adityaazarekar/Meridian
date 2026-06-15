@@ -37,6 +37,32 @@ export async function getBatchQuotes(tickers = []) {
 }
 
 /**
+ * Live company search — queries Yahoo Finance in real-time for any company name or ticker.
+ * Returns up to 10 result stubs: { symbol, name, exchange, type, sector }.
+ */
+export async function liveSearchCompanies(query) {
+  if (!query || !query.trim()) return [];
+  const res = await fetch(`${BASE}/api/live-search?q=${encodeURIComponent(query.trim())}`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  if (data.error) return [];
+  return data;
+}
+
+/**
+ * Fetch full metrics + chart for a single ticker (used after live search pick).
+ * Returns { metrics, chart } shaped exactly like getStockData().
+ */
+export async function fetchCompanyByTicker(ticker) {
+  const res = await fetch(`${BASE}/api/stock-metrics/${encodeURIComponent(ticker.toUpperCase())}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Failed to fetch ${ticker}`);
+  }
+  return res.json();
+}
+
+/**
  * Normalize backend chart rows for Recharts (preserves existing dataKeys).
  */
 export function normalizeChart(chartArray = []) {

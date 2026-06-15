@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import "./App.css";
 import {
   getGlobalTickers,
@@ -7,6 +7,8 @@ import {
   normalizeChart,
   stubsFromGlobalMap,
   mergeApiMetricsToCompany,
+  liveSearchCompanies,
+  fetchCompanyByTicker,
 } from "./services/marketAPI";
 import { fmtNum, getCurrencySymbol, fmtLocalPrice, fmtUsdBn } from "./utils/formatMetric";
 import StockLab from "./components/StockLab";
@@ -596,6 +598,15 @@ function MeridianLoadingScreen() {
           ))}
         </div>
       </div>
+
+      {/* Live-pick loading overlay � shown while fetching company metrics */}
+      {livePickLoading && (
+        <div className="live-pick-overlay">
+          <div style={{ width: 48, height: 48, borderRadius: "50%", border: "3px solid rgba(232,184,75,0.2)", borderTopColor: "#e8b84b", animation: "spin 0.8s linear infinite" }} />
+          <div style={{ color: "#f1f5f9", fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 15, fontWeight: 600 }}>Loading company data�</div>
+          <div style={{ color: "#475569", fontSize: 12 }}>Fetching live metrics from Yahoo Finance</div>
+        </div>
+      )}
     </>
   );
 }
@@ -984,12 +995,83 @@ export default function App({ user, onLogout }) {
     return Array.from({ length: 7 }, () => Array.from({ length: 12 }, () => ({ value: rnd(5, 95) })));
   }, []);
 
-  // Global search results
-  const globalSearchResults = useMemo(() => {
-    if (!globalSearch.trim()) return [];
-    const q = globalSearch.toLowerCase();
-    return data.filter(c => c.name.toLowerCase().includes(q)).slice(0, 8);
-  }, [data, globalSearch]);
+  // Live global search — debounced, queries Yahoo Finance for any company worldwide
+  const [liveSearchResults, setLiveSearchResults] = useState([]);
+  const [liveSearchLoading, setLiveSearchLoading] = useState(false);
+  const liveSearchAbortRef = useRef(null);
+
+  useEffect(() => {
+    const q = globalSearch.trim();
+    if (!q) {
+      setLiveSearchResults([]);
+      setLiveSearchLoading(false);
+      return;
+    }
+    setLiveSearchLoading(true);
+    // Debounce 350ms
+    const timer = setTimeout(async () => {
+      try {
+        const results = await liveSearchCompanies(q);
+        setLiveSearchResults(results || []);
+      } catch {
+        setLiveSearchResults([]);
+      } finally {
+        setLiveSearchLoading(false);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [globalSearch]);
+
+  // Handle picking a company from live search — fetches full metrics then opens modal
+  const [livePickLoading, setLivePickLoading] = useState(false);
+  const handleLiveSearchPick = useCallback(async (result) => {
+    setGlobalSearch('');
+    setSearchFocused(false);
+    setLiveSearchResults([]);
+    setLivePickLoading(true);
+    try {
+      const { metrics, chart } = await fetchCompanyByTicker(result.symbol);
+      // Build a full company row from the fetched metrics
+      const stub = {
+        id: `live-${result.symbol}`,
+        symbol: result.symbol,
+        name: result.name,
+        sector: result.sector || 'Unknown',
+        country: metrics.country || 'Unknown',
+        currency: metrics.currency || 'USD',
+        financialCurrency: metrics.financialCurrency || 'USD',
+        website: metrics.website || null,
+        logoUrl: metrics.logoUrl || null,
+        finnhubLogo: metrics.finnhubLogo || null,
+        capitalGravity: 0,
+        revenueFlow: 0,
+        netYield: 0,
+        valuationIndex: 0,
+        sharePrice: 0,
+        liquidityScore: 0,
+        growthMomentum: 0,
+        riskCoefficient: 0,
+        efficiencyRatio: 0,
+        peRatio: null, pbRatio: null, debtEquity: null,
+        roe: null, roa: null, beta: null, sharpeRatio: null,
+        dividendYield: null, ebitdaMargin: null, fcfYield: null,
+        dividendRate: null, dividendAnnual: null,
+        payoutRatioPct: null, divYield5YAvg: null, exDividendDate: null,
+        esgEnv: 55, esgSoc: 55, esgGov: 55, esgTotal: 55,
+        priceHistory: chart || null,
+      };
+      const merged = mergeApiMetricsToCompany(stub, metrics);
+      // Also attach chart for modal price history
+      merged.priceHistory = chart;
+      setModalCompany(merged);
+    } catch (err) {
+      console.error('Live search fetch failed:', err);
+    } finally {
+      setLivePickLoading(false);
+    }
+  }, []);
+
+
 
   // Monte Carlo simulation (1000 runs × 60 days)
   const monteCarlo = useMemo(() => {
@@ -1356,31 +1438,56 @@ export default function App({ user, onLogout }) {
                 </div>
               )}
 
-              {/* Global Search */}
+              {/* Global Search — live Yahoo Finance */}
               <div className="search-wrap">
                 <span className="search-icon">🔍</span>
-                <input className="search-box" placeholder="Search any company…" value={globalSearch}
-                  onChange={e => setGlobalSearch(e.target.value)} onFocus={() => setSearchFocused(true)} onBlur={() => setTimeout(() => setSearchFocused(false), 200)} />
-                {searchFocused && globalSearchResults.length > 0 && (
+                <input
+                  className="search-box"
+                  placeholder="Search any company worldwide…"
+                  value={globalSearch}
+                  onChange={e => setGlobalSearch(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setTimeout(() => setSearchFocused(false), 300)}
+                />
+                {searchFocused && globalSearch.trim() && (
                   <div className="search-results">
-                    {globalSearchResults.map(c => (
-                      <div key={c.id} className="search-results-item micro-list-item" onClick={() => { setModalCompany(c); setGlobalSearch(''); setSearchFocused(false); }}>
-                        <CompanyLogo company={c} size={30} radius={8} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ color: P.white, fontWeight: 600 }}>{c.name}</span>
-                          <div style={{ fontSize: 11, color: P.slateD, marginTop: 2, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                            <CountryFlag country={c.country} size={14} />
-                            <span>{c.country}</span>
-                            <span style={{ fontFamily: "DM Mono, monospace" }}>{c.symbol}</span>
-                          </div>
-                          <div style={{ fontSize: 10, color: P.slateD, marginTop: 4 }}>{c.sector} · {fmtUsdBn(c.capitalGravity)} mcap (USD)</div>
+                    {liveSearchLoading && (
+                      <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 10, color: P.slateD, fontSize: 13 }}>
+                        <span style={{ display: "inline-block", width: 16, height: 16, borderRadius: "50%", border: `2px solid ${P.gold}`, borderTopColor: "transparent", animation: "spin 0.7s linear infinite" }} />
+                        Searching Yahoo Finance…
+                      </div>
+                    )}
+                    {!liveSearchLoading && liveSearchResults.length === 0 && (
+                      <div style={{ padding: "14px 16px", color: P.slateD, fontSize: 13 }}>
+                        No results found for <strong style={{ color: P.white }}>"{globalSearch}"</strong>
+                        <div style={{ fontSize: 11, marginTop: 4, color: P.slateD }}>Note: Private companies (e.g. SpaceX) are not listed on exchanges.</div>
+                      </div>
+                    )}
+                    {!liveSearchLoading && liveSearchResults.map(r => (
+                      <div
+                        key={r.symbol}
+                        className="search-results-item micro-list-item"
+                        onMouseDown={e => { e.preventDefault(); handleLiveSearchPick(r); }}
+                      >
+                        <div style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(232,184,75,0.12)", border: "1px solid rgba(232,184,75,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "'DM Mono',monospace", fontSize: 11, color: P.gold, fontWeight: 700 }}>
+                          {(r.symbol || "?").slice(0, 4)}
                         </div>
-                        <span style={{ fontFamily: "DM Mono", color: P.gold, fontSize: 12 }}>{fmtLocalPrice(c.sharePrice, c.currency)}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ color: P.white, fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+                          <div style={{ fontSize: 11, color: P.slateD, marginTop: 2, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <span style={{ fontFamily: "DM Mono, monospace", color: P.gold }}>{r.symbol}</span>
+                            {r.exchange && <span style={{ background: "rgba(56,189,248,0.12)", color: P.sky, borderRadius: 4, padding: "1px 5px", fontSize: 10, fontWeight: 600 }}>{r.exchange}</span>}
+                            {r.type && r.type !== "EQUITY" && <span style={{ background: "rgba(167,139,250,0.12)", color: P.violet, borderRadius: 4, padding: "1px 5px", fontSize: 10, fontWeight: 600 }}>{r.type}</span>}
+                          </div>
+                          {r.sector && <div style={{ fontSize: 10, color: P.slateD, marginTop: 3 }}>{r.sector}{r.industry ? ` · ${r.industry}` : ""}</div>}
+                        </div>
+                        <span style={{ fontSize: 11, color: P.slateD, flexShrink: 0 }}>↗</span>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
+
             </div>
             <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
               <Gauge value={live.vol} max={100} color={P.sky} label="Volume" size={86} />
@@ -2643,6 +2750,15 @@ export default function App({ user, onLogout }) {
           </div>
         </div>
       </div>
+
+      {/* Live-pick loading overlay � shown while fetching company metrics */}
+      {livePickLoading && (
+        <div className="live-pick-overlay">
+          <div style={{ width: 48, height: 48, borderRadius: "50%", border: "3px solid rgba(232,184,75,0.2)", borderTopColor: "#e8b84b", animation: "spin 0.8s linear infinite" }} />
+          <div style={{ color: "#f1f5f9", fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 15, fontWeight: 600 }}>Loading company data�</div>
+          <div style={{ color: "#475569", fontSize: 12 }}>Fetching live metrics from Yahoo Finance</div>
+        </div>
+      )}
     </>
   );
 }

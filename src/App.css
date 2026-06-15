@@ -547,6 +547,26 @@
     }
 }
 
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* Live-pick loading overlay */
+.live-pick-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 12, 20, 0.75);
+    backdrop-filter: blur(6px);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    animation: fadein .2s both;
+}
+
 .slide-in-left {
     animation: slideinleft .55s cubic-bezier(.16, 1, .3, 1) both;
 }
